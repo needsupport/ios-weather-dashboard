@@ -1,26 +1,178 @@
 import SwiftUI
-import CoreLocation
 
 struct SavedLocationsView: View {
     @EnvironmentObject var viewModel: WeatherViewModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismiss
     @State private var showingAddLocationSheet = false
-    @State private var editMode: EditMode = .inactive
+    @State private var searchText = ""
+    @State private var isSearching = false
     
     var body: some View {
         NavigationView {
-            List {
-                // Current location section
-                Section(header: Text("CURRENT LOCATION")) {
-                    Button(action: {
-                        viewModel.requestCurrentLocation()
+            ZStack {
+                // Background
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
+                
+                // Content
+                VStack(spacing: 0) {
+                    // Search bar
+                    searchBar
+                    
+                    if viewModel.locationManager.savedLocations.isEmpty && !isSearching {
+                        // Empty state
+                        emptyState
+                    } else if isSearching {
+                        // Search results
+                        searchResults
+                    } else {
+                        // Saved locations list
+                        savedLocationsList
+                    }
+                }
+            }
+            .navigationTitle("Saved Locations")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
                         dismiss()
-                    }) {
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showingAddLocationSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddLocationSheet) {
+                AddLocationView { name, latitude, longitude in
+                    viewModel.addCustomLocation(name: name, lat: latitude, lon: longitude)
+                    showingAddLocationSheet = false
+                }
+            }
+        }
+    }
+    
+    // MARK: - Components
+    
+    private var searchBar: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            
+            TextField("Search for cities", text: $searchText)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .onChange(of: searchText) { _ in
+                    isSearching = !searchText.isEmpty
+                }
+            
+            if isSearching {
+                Button(action: {
+                    searchText = ""
+                    isSearching = false
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(.systemBackground))
+        .cornerRadius(10)
+        .padding()
+    }
+    
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "mappin.slash")
+                .font(.system(size: 60))
+                .foregroundColor(.secondary)
+                .padding(.top, 60)
+            
+            Text("No Saved Locations")
+                .font(.headline)
+            
+            Text("Save your favorite locations to quickly access weather information")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button {
+                viewModel.saveCurrentLocation()
+            } label: {
+                Label("Add Current Location", systemImage: "location")
+                    .font(.headline)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+            }
+            .padding(.horizontal, 40)
+            .padding(.top, 8)
+            
+            Button {
+                showingAddLocationSheet = true
+            } label: {
+                Label("Add Custom Location", systemImage: "plus")
+                    .font(.headline)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.secondary.opacity(0.2))
+                    .foregroundColor(.primary)
+                    .cornerRadius(10)
+            }
+            .padding(.horizontal, 40)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var savedLocationsList: some View {
+        List {
+            // Current location section
+            Section(header: Text("CURRENT LOCATION")) {
+                Button {
+                    viewModel.requestCurrentLocation()
+                    dismiss()
+                } label: {
+                    HStack {
+                        Image(systemName: "location.fill")
+                            .foregroundColor(.blue)
+                        Text("Current Location")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            
+            // Saved locations section
+            Section(header: Text("SAVED LOCATIONS")) {
+                ForEach(viewModel.locationManager.savedLocations) { location in
+                    Button {
+                        viewModel.useSavedLocation(location)
+                        dismiss()
+                    } label: {
                         HStack {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(.blue)
-                            
-                            Text("Current Location")
+                            VStack(alignment: .leading) {
+                                Text(location.name)
+                                
+                                if viewModel.hasCachedData(for: location.name) {
+                                    Text("Cached data available")
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                }
+                            }
                             
                             Spacer()
                             
@@ -28,203 +180,139 @@ struct SavedLocationsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        .contentShape(Rectangle())
                     }
-                }
-                
-                // Saved locations section
-                Section(header: Text("SAVED LOCATIONS")) {
-                    if viewModel.locationManager.savedLocations.isEmpty {
-                        Text("No saved locations")
-                            .foregroundColor(.secondary)
-                            .italic()
-                    } else {
-                        ForEach(viewModel.locationManager.savedLocations, id: \.id) { location in
-                            Button(action: {
-                                if editMode == .inactive {
-                                    viewModel.loadLocationWeather(location: location)
-                                    dismiss()
-                                }
-                            }) {
-                                HStack {
-                                    Text(location.name)
-                                    
-                                    Spacer()
-                                    
-                                    if editMode == .inactive {
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                            }
+                    .buttonStyle(PlainButtonStyle())
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            viewModel.removeSavedLocation(id: location.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
-                        .onDelete(perform: deleteLocations)
                     }
-                }
-            }
-            .listStyle(InsetGroupedListStyle())
-            .navigationTitle("Locations")
-            .navigationBarItems(
-                leading: EditButton().disabled(viewModel.locationManager.savedLocations.isEmpty),
-                trailing: Button(action: {
-                    showingAddLocationSheet = true
-                }) {
-                    Image(systemName: "plus")
-                }
-            )
-            .environment(\.editMode, $editMode)
-            .sheet(isPresented: $showingAddLocationSheet) {
-                AddLocationView { locationName, coordinate in
-                    viewModel.locationManager.addSavedLocation(
-                        name: locationName,
-                        coordinates: coordinate
-                    )
                 }
             }
         }
+        .listStyle(InsetGroupedListStyle())
     }
     
-    private func deleteLocations(at offsets: IndexSet) {
-        for index in offsets {
-            let location = viewModel.locationManager.savedLocations[index]
-            viewModel.locationManager.removeSavedLocation(id: location.id)
+    private var searchResults: some View {
+        VStack {
+            if searchText.count < 2 {
+                Text("Enter at least 2 characters to search")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 40)
+            } else {
+                Button {
+                    viewModel.searchLocation(query: searchText)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("Search for \"\(searchText)\"")
+                            .font(.headline)
+                        Spacer()
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding()
+            }
         }
     }
 }
 
 struct AddLocationView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var searchText = ""
-    @State private var searchResults: [LocationSearchResult] = []
-    @State private var isSearching = false
+    @Environment(\.dismiss) var dismiss
+    @State private var locationName = ""
+    @State private var latitude = ""
+    @State private var longitude = ""
     @State private var errorMessage: String?
+    @State private var showingError = false
     
-    var onLocationAdded: (String, CLLocationCoordinate2D) -> Void
-    
-    // Mock search completion for demo
-    private func searchLocations(query: String) {
-        isSearching = true
-        errorMessage = nil
-        
-        // In a real app, this would use the Maps API or a geocoding service
-        // For the demo, we'll use a hardcoded list of cities
-        let cities = [
-            "New York, NY": CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
-            "Los Angeles, CA": CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437),
-            "Chicago, IL": CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298),
-            "Houston, TX": CLLocationCoordinate2D(latitude: 29.7604, longitude: -95.3698),
-            "Phoenix, AZ": CLLocationCoordinate2D(latitude: 33.4484, longitude: -112.0740),
-            "Philadelphia, PA": CLLocationCoordinate2D(latitude: 39.9526, longitude: -75.1652),
-            "San Antonio, TX": CLLocationCoordinate2D(latitude: 29.4241, longitude: -98.4936),
-            "San Diego, CA": CLLocationCoordinate2D(latitude: 32.7157, longitude: -117.1611),
-            "Dallas, TX": CLLocationCoordinate2D(latitude: 32.7767, longitude: -96.7970),
-            "San Jose, CA": CLLocationCoordinate2D(latitude: 37.3382, longitude: -121.8863)
-        ]
-        
-        // Filter cities based on search query
-        searchResults = cities.filter { $0.key.lowercased().contains(query.lowercased()) }
-            .map { LocationSearchResult(id: UUID().uuidString, name: $0.key, coordinates: $0.value) }
-        
-        // Simulate network delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            isSearching = false
-            
-            if searchResults.isEmpty {
-                errorMessage = "No locations found. Try a different search term."
-            }
-        }
-    }
+    var onLocationAdded: (String, Double, Double) -> Void
     
     var body: some View {
         NavigationView {
-            VStack {
-                // Search bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.gray)
+            Form {
+                Section(header: Text("Location Details")) {
+                    TextField("Location Name", text: $locationName)
                     
-                    TextField("Search for a city", text: $searchText)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .onChange(of: searchText) { newValue in
-                            if newValue.count >= 3 {
-                                searchLocations(query: newValue)
-                            } else {
-                                searchResults = []
-                            }
-                        }
+                    TextField("Latitude (e.g. 37.7749)", text: $latitude)
+                        .keyboardType(.decimalPad)
                     
-                    if !searchText.isEmpty {
-                        Button(action: {
-                            searchText = ""
-                            searchResults = []
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.gray)
-                        }
-                    }
-                }
-                .padding(10)
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding(.horizontal)
-                
-                if isSearching {
-                    ProgressView()
-                        .padding()
-                } else if let error = errorMessage {
-                    Text(error)
-                        .foregroundColor(.secondary)
-                        .padding()
-                } else {
-                    List(searchResults) { result in
-                        Button(action: {
-                            onLocationAdded(result.name, result.coordinates)
-                            dismiss()
-                        }) {
-                            Text(result.name)
-                        }
-                    }
+                    TextField("Longitude (e.g. -122.4194)", text: $longitude)
+                        .keyboardType(.decimalPad)
                 }
                 
-                if searchText.isEmpty {
-                    // Help text when no search
-                    VStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 40))
-                            .foregroundColor(.gray)
-                            .padding(.top, 40)
-                        
-                        Text("Search for a City")
-                            .font(.headline)
-                        
-                        Text("Enter a city name to add it to your saved locations")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                Section {
+                    Button(action: validateAndAddLocation) {
+                        Text("Add Location")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .foregroundColor(isValid ? .blue : .gray)
                     }
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .disabled(!isValid)
                 }
             }
             .navigationTitle("Add Location")
-            .navigationBarItems(trailing: Button("Cancel") {
-                dismiss()
-            })
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert(isPresented: $showingError) {
+                Alert(
+                    title: Text("Invalid Input"),
+                    message: Text(errorMessage ?? "Please check your input values"),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
         }
     }
-}
-
-struct LocationSearchResult: Identifiable {
-    let id: String
-    let name: String
-    let coordinates: CLLocationCoordinate2D
+    
+    private var isValid: Bool {
+        return !locationName.isEmpty && !latitude.isEmpty && !longitude.isEmpty
+    }
+    
+    private func validateAndAddLocation() {
+        guard let lat = Double(latitude) else {
+            errorMessage = "Latitude must be a valid number"
+            showingError = true
+            return
+        }
+        
+        guard let lon = Double(longitude) else {
+            errorMessage = "Longitude must be a valid number"
+            showingError = true
+            return
+        }
+        
+        guard lat >= -90 && lat <= 90 else {
+            errorMessage = "Latitude must be between -90 and 90"
+            showingError = true
+            return
+        }
+        
+        guard lon >= -180 && lon <= 180 else {
+            errorMessage = "Longitude must be between -180 and 180"
+            showingError = true
+            return
+        }
+        
+        onLocationAdded(locationName, lat, lon)
+    }
 }
 
 struct SavedLocationsView_Previews: PreviewProvider {
     static var previews: some View {
-        SavedLocationsView()
-            .environmentObject(WeatherViewModel())
+        let viewModel = WeatherViewModel()
+        return SavedLocationsView()
+            .environmentObject(viewModel)
     }
 }
