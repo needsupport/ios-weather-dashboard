@@ -301,18 +301,479 @@ class OpenWeatherMapAPI: WeatherAPIProtocol {
 // MARK: - National Weather Service Implementation
 class NWSWeatherAPI: WeatherAPIProtocol {
     private let baseURL = "https://api.weather.gov"
+    private let decoder: JSONDecoder
+    private let userAgent = "iOS-Weather-Dashboard/1.0 (github.com/needsupport/ios-weather-dashboard)"
+    
+    init() {
+        decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+    }
     
     func fetchWeatherData(for location: CLLocationCoordinate2D, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<APIResponse, WeatherError> {
-        // Implementation for NWS API would go here
-        // This is complex and requires multiple API calls to the NWS endpoints
-        // For brevity, return a placeholder implementation
+        // Multi-step API calls to NWS endpoints
         
-        return Fail(error: WeatherError.apiError("NWS API not fully implemented yet")).eraseToAnyPublisher()
+        // 1. First get the grid points for the location
+        return getGridPoints(for: location)
+            .flatMap { gridInfo -> AnyPublisher<(NWSPointProperties, [NWSForecastPeriod], [NWSForecastPeriod]), WeatherError> in
+                // 2. Fetch both daily and hourly forecasts in parallel
+                return Publishers.Zip3(
+                    Just(gridInfo).setFailureType(to: WeatherError.self),
+                    self.getDailyForecast(from: gridInfo.forecast),
+                    self.getHourlyForecast(from: gridInfo.forecastHourly)
+                ).eraseToAnyPublisher()
+            }
+            .flatMap { gridInfo, dailyPeriods, hourlyPeriods -> AnyPublisher<(NWSPointProperties, [NWSForecastPeriod], [NWSForecastPeriod], [WeatherAlert]), WeatherError> in
+                // 3. Fetch alerts
+                return Publishers.Zip(
+                    Just((gridInfo, dailyPeriods, hourlyPeriods)).setFailureType(to: WeatherError.self),
+                    self.getAlerts(for: location)
+                )
+                .map { data, alerts in
+                    return (data.0, data.1, data.2, alerts)
+                }
+                .eraseToAnyPublisher()
+            }
+            .map { gridInfo, dailyPeriods, hourlyPeriods, alerts -> APIResponse in
+                // 4. Convert NWS data to our app's model format
+                let weatherData = self.convertToWeatherData(
+                    gridInfo: gridInfo,
+                    dailyPeriods: dailyPeriods,
+                    hourlyPeriods: hourlyPeriods,
+                    unit: unit
+                )
+                
+                return APIResponse(weatherData: weatherData, alerts: alerts)
+            }
+            .eraseToAnyPublisher()
     }
     
     func fetchWeatherData(for cityName: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<APIResponse, WeatherError> {
-        // NWS doesn't support city name lookup directly
-        return Fail(error: WeatherError.apiError("NWS API doesn't support city name lookup")).eraseToAnyPublisher()
+        // NWS doesn't support city name lookup directly, we need to geocode first
+        let geocoder = CLGeocoder()
+        
+        return Future<CLLocationCoordinate2D, WeatherError> { promise in
+            geocoder.geocodeAddressString(cityName) { placemarks, error in
+                if let error = error {
+                    promise(.failure(WeatherError.apiError("Geocoding error: \(error.localizedDescription)")))
+                    return
+                }
+                
+                guard let location = placemarks?.first?.location?.coordinate else {
+                    promise(.failure(WeatherError.apiError("Location not found")))
+                    return
+                }
+                
+                promise(.success(location))
+            }
+        }
+        .flatMap { coordinates in
+            self.fetchWeatherData(for: coordinates, unit: unit)
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // Helper method to create URL request with proper headers
+    private func createRequest(for url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.addValue("application/geo+json", forHTTPHeaderField: "Accept")
+        return request
+    }
+    
+    // Get grid points from lat/lon
+    private func getGridPoints(for location: CLLocationCoordinate2D) -> AnyPublisher<NWSPointProperties, WeatherError> {
+        let endpoint = "\(baseURL)/points/\(location.latitude),\(location.longitude)"
+        guard let url = URL(string: endpoint) else {
+            return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        let request = createRequest(for: url)
+        
+        return URLSession.shared.dataTaskPublisher(for: request)
+            .mapError { WeatherError.networkError($0) }
+            .map { $0.data }
+            .decode(type: NWSPointsResponse.self, decoder: decoder)
+            .mapError { error -> WeatherError in
+                if let decodingError = error as? DecodingError {
+                    return WeatherError.decodingError(decodingError)
+                } else {
+                    return WeatherError.apiError(error.localizedDescription)
+                }
+            }
+            .map { $0.properties }
+            .eraseToAnyPublisher()
+    }
+    
+    // Get daily forecast
+    private func getDailyForecast(from urlString: String) -> AnyPublisher<[NWSForecastPeriod], WeatherError> {
+        guard let url = URL(string: urlString) else {
+            return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        let request = createRequest(for: url)
+        
+        return URLSession.shared.dataTaskPublisher(for: request)
+            .mapError { WeatherError.networkError($0) }
+            .map { $0.data }
+            .decode(type: NWSForecastResponse.self, decoder: decoder)
+            .mapError { WeatherError.decodingError($0) }
+            .map { $0.properties.periods }
+            .eraseToAnyPublisher()
+    }
+    
+    // Get hourly forecast
+    private func getHourlyForecast(from urlString: String) -> AnyPublisher<[NWSForecastPeriod], WeatherError> {
+        guard let url = URL(string: urlString) else {
+            return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        let request = createRequest(for: url)
+        
+        return URLSession.shared.dataTaskPublisher(for: request)
+            .mapError { WeatherError.networkError($0) }
+            .map { $0.data }
+            .decode(type: NWSForecastResponse.self, decoder: decoder)
+            .mapError { WeatherError.decodingError($0) }
+            .map { $0.properties.periods }
+            .eraseToAnyPublisher()
+    }
+    
+    // Get weather alerts
+    private func getAlerts(for location: CLLocationCoordinate2D) -> AnyPublisher<[WeatherAlert], WeatherError> {
+        let endpoint = "\(baseURL)/alerts/active?point=\(location.latitude),\(location.longitude)"
+        guard let url = URL(string: endpoint) else {
+            return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        let request = createRequest(for: url)
+        
+        return URLSession.shared.dataTaskPublisher(for: request)
+            .mapError { WeatherError.networkError($0) }
+            .map { $0.data }
+            .decode(type: NWSAlertResponse.self, decoder: decoder)
+            .mapError { WeatherError.decodingError($0) }
+            .map { response -> [WeatherAlert] in
+                return response.features.map { feature in
+                    return self.convertToWeatherAlert(feature.properties)
+                }
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    // Convert NWS data to our WeatherData model
+    private func convertToWeatherData(
+        gridInfo: NWSPointProperties,
+        dailyPeriods: [NWSForecastPeriod],
+        hourlyPeriods: [NWSForecastPeriod],
+        unit: WeatherViewModel.UserPreferences.TemperatureUnit
+    ) -> WeatherData {
+        var weatherData = WeatherData()
+        
+        // Set location
+        if let relativeLocation = gridInfo.relativeLocation?.properties {
+            weatherData.location = "\(relativeLocation.city), \(relativeLocation.state)"
+        } else {
+            weatherData.location = "Unknown Location"
+        }
+        
+        // Set metadata
+        let dateFormatter = ISO8601DateFormatter()
+        let metadata = WeatherMetadata(
+            office: gridInfo.gridId,
+            gridX: String(gridInfo.gridX),
+            gridY: String(gridInfo.gridY),
+            timezone: gridInfo.timeZone ?? TimeZone.current.identifier,
+            updated: Date().ISO8601Format()
+        )
+        weatherData.metadata = metadata
+        
+        // Process daily forecasts - NWS provides day/night periods, so we need to pair them
+        let groupedDaily = groupDailyPeriods(dailyPeriods)
+        weatherData.daily = groupedDaily.map { self.convertToDaily($0, unit: unit) }
+        
+        // Process hourly forecasts
+        weatherData.hourly = hourlyPeriods.prefix(24).enumerated().map { index, period in
+            return self.convertToHourly(period, index: index, unit: unit)
+        }
+        
+        return weatherData
+    }
+    
+    // Group day/night periods into single days
+    private func groupDailyPeriods(_ periods: [NWSForecastPeriod]) -> [[NWSForecastPeriod]] {
+        var grouped: [[NWSForecastPeriod]] = []
+        var currentGroup: [NWSForecastPeriod] = []
+        
+        for period in periods {
+            if currentGroup.isEmpty {
+                currentGroup.append(period)
+            } else if (currentGroup.last!.isDaytime && !period.isDaytime) || 
+                      (!currentGroup.last!.isDaytime && period.isDaytime && period.number % 2 == 1) {
+                currentGroup.append(period)
+                if currentGroup.count == 2 || (!currentGroup[0].isDaytime && currentGroup.count == 1) {
+                    grouped.append(currentGroup)
+                    currentGroup = []
+                }
+            } else {
+                grouped.append(currentGroup)
+                currentGroup = [period]
+            }
+        }
+        
+        if !currentGroup.isEmpty {
+            grouped.append(currentGroup)
+        }
+        
+        return grouped
+    }
+    
+    // Convert NWS periods to our daily forecast model
+    private func convertToDaily(_ periods: [NWSForecastPeriod], unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> DailyForecast {
+        let dayPeriod = periods.first(where: { $0.isDaytime }) ?? periods.first!
+        let nightPeriod = periods.first(where: { !$0.isDaytime })
+        
+        let dateFormatter = ISO8601DateFormatter()
+        let date = dateFormatter.date(from: dayPeriod.startTime) ?? Date()
+        
+        let dayNameFormatter = DateFormatter()
+        dayNameFormatter.dateFormat = "E"
+        let fullDayFormatter = DateFormatter()
+        fullDayFormatter.dateFormat = "EEEE"
+        
+        let tempHigh = Double(dayPeriod.temperature)
+        let tempLow = nightPeriod != nil ? Double(nightPeriod.temperature) : (tempHigh - 10) // Fallback
+        
+        // Extract wind speed as a number
+        let windSpeedString = dayPeriod.windSpeed.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        let windSpeed = Double(windSpeedString) ?? 0
+        
+        // Convert temperature if needed
+        let adjustedHigh = dayPeriod.temperatureUnit == "F" && unit == .celsius ? (tempHigh - 32) * 5/9 : tempHigh
+        let adjustedLow = dayPeriod.temperatureUnit == "F" && unit == .celsius ? (tempLow - 32) * 5/9 : tempLow
+        
+        return DailyForecast(
+            id: "day-\(dayPeriod.number)",
+            day: dayNameFormatter.string(from: date),
+            fullDay: fullDayFormatter.string(from: date),
+            date: date,
+            tempHigh: adjustedHigh,
+            tempLow: adjustedLow,
+            precipitation: Precipitation(chance: getCombinedPrecipChance(dayPeriod, nightPeriod)),
+            uvIndex: getUVIndex(dayPeriod.detailedForecast),
+            wind: Wind(speed: windSpeed, direction: dayPeriod.windDirection),
+            icon: mapNWSIconToAppIcon(dayPeriod.icon),
+            detailedForecast: dayPeriod.detailedForecast,
+            shortForecast: dayPeriod.shortForecast,
+            humidity: getHumidityEstimate(dayPeriod.detailedForecast),
+            dewpoint: nil, // NWS doesn't provide dewpoint in basic forecast
+            pressure: nil, // NWS doesn't provide pressure in basic forecast
+            skyCover: getSkyCoverEstimate(dayPeriod.shortForecast)
+        )
+    }
+    
+    // Convert NWS hourly period to our hourly forecast model
+    private func convertToHourly(_ period: NWSForecastPeriod, index: Int, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> HourlyForecast {
+        let dateFormatter = ISO8601DateFormatter()
+        let date = dateFormatter.date(from: period.startTime) ?? Date()
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "ha"
+        
+        let temp = Double(period.temperature)
+        let adjustedTemp = period.temperatureUnit == "F" && unit == .celsius ? (temp - 32) * 5/9 : temp
+        
+        // Extract wind speed as a number
+        let windSpeedString = period.windSpeed.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        let windSpeed = Double(windSpeedString) ?? 0
+        
+        return HourlyForecast(
+            id: "hour-\(index)",
+            time: timeFormatter.string(from: date).lowercased(),
+            temperature: adjustedTemp,
+            icon: mapNWSIconToAppIcon(period.icon),
+            shortForecast: period.shortForecast,
+            windSpeed: windSpeed,
+            windDirection: period.windDirection,
+            isDaytime: period.isDaytime
+        )
+    }
+    
+    // Convert NWS alert to our weather alert model
+    private func convertToWeatherAlert(_ alert: NWSAlertProperties) -> WeatherAlert {
+        let dateFormatter = ISO8601DateFormatter()
+        
+        // Parse dates
+        let startDate = dateFormatter.date(from: alert.effective) ?? Date()
+        let endDate = dateFormatter.date(from: alert.expires)
+        
+        return WeatherAlert(
+            id: alert.id,
+            headline: alert.headline ?? alert.event,
+            description: alert.description,
+            severity: mapNWSSeverity(alert.severity),
+            event: alert.event,
+            start: startDate,
+            end: endDate
+        )
+    }
+    
+    // Map NWS icon URLs to our app icons
+    private func mapNWSIconToAppIcon(_ iconURL: String) -> String {
+        if iconURL.contains("sunny") || iconURL.contains("clear") {
+            return iconURL.contains("night") ? "clear-night" : "clear-day"
+        } else if iconURL.contains("cloudy") {
+            if iconURL.contains("partly") {
+                return iconURL.contains("night") ? "partly-cloudy-night" : "partly-cloudy-day"
+            } else {
+                return "cloudy"
+            }
+        } else if iconURL.contains("rain") {
+            return "rain"
+        } else if iconURL.contains("snow") {
+            return "snow"
+        } else if iconURL.contains("sleet") || iconURL.contains("ice") {
+            return "sleet"
+        } else if iconURL.contains("fog") {
+            return "fog"
+        } else if iconURL.contains("wind") {
+            return "wind"
+        }
+        
+        return "cloudy" // Default fallback
+    }
+    
+    // Map NWS severity to our severity levels
+    private func mapNWSSeverity(_ severity: String) -> String {
+        switch severity.lowercased() {
+        case "extreme":
+            return "extreme"
+        case "severe":
+            return "severe"
+        case "moderate":
+            return "moderate"
+        default:
+            return "minor"
+        }
+    }
+    
+    // Extract UV index from forecast text (NWS doesn't provide it directly)
+    private func getUVIndex(_ detailedForecast: String) -> Int {
+        if detailedForecast.contains("UV index") {
+            let components = detailedForecast.components(separatedBy: "UV index")
+            if components.count > 1 {
+                let afterUV = components[1]
+                let numberStr = afterUV.components(separatedBy: CharacterSet.decimalDigits.inverted)[0]
+                return Int(numberStr) ?? 0
+            }
+        }
+        
+        // Estimate based on cloud cover and forecast text
+        if detailedForecast.contains("sunny") {
+            return 8
+        } else if detailedForecast.contains("partly sunny") {
+            return 5
+        } else if detailedForecast.contains("cloudy") {
+            return 2
+        }
+        
+        return 3 // Default moderate value
+    }
+    
+    // Estimate humidity from forecast text
+    private func getHumidityEstimate(_ detailedForecast: String) -> Double? {
+        if detailedForecast.contains("humidity") {
+            let components = detailedForecast.components(separatedBy: "humidity")
+            if components.count > 1 {
+                let beforeHumidity = components[0].components(separatedBy: " ").last ?? ""
+                return Double(beforeHumidity)
+            }
+        }
+        
+        // Rough estimate based on conditions
+        if detailedForecast.contains("rain") || detailedForecast.contains("shower") {
+            return 85.0
+        } else if detailedForecast.contains("fog") || detailedForecast.contains("mist") {
+            return 95.0
+        } else if detailedForecast.contains("humid") {
+            return 80.0
+        } else if detailedForecast.contains("dry") {
+            return 30.0
+        }
+        
+        return 60.0 // Default value
+    }
+    
+    // Estimate sky cover from forecast text
+    private func getSkyCoverEstimate(_ shortForecast: String) -> Double? {
+        if shortForecast.contains("Clear") || shortForecast.contains("Sunny") {
+            return 0.0
+        } else if shortForecast.contains("Mostly Clear") || shortForecast.contains("Mostly Sunny") {
+            return 25.0
+        } else if shortForecast.contains("Partly Cloudy") || shortForecast.contains("Partly Sunny") {
+            return 50.0
+        } else if shortForecast.contains("Mostly Cloudy") {
+            return 75.0
+        } else if shortForecast.contains("Cloudy") {
+            return 100.0
+        }
+        
+        return 50.0 // Default value
+    }
+    
+    // Extract precipitation chance from forecast text if available
+    private func extractPrecipChance(from detailedForecast: String) -> Double {
+        // Look for patterns like "40 percent chance of rain" or "chance of rain 40 percent"
+        let regex1 = try? NSRegularExpression(pattern: "(\\d+)\\s*percent\\s*chance", options: [.caseInsensitive])
+        let regex2 = try? NSRegularExpression(pattern: "chance\\s*of\\s*[\\w\\s]+\\s*(\\d+)\\s*percent", options: [.caseInsensitive])
+        
+        if let regex = regex1, let match = regex.firstMatch(in: detailedForecast, range: NSRange(detailedForecast.startIndex..., in: detailedForecast)) {
+            if let percentRange = Range(match.range(at: 1), in: detailedForecast) {
+                if let percent = Double(detailedForecast[percentRange]) {
+                    return percent
+                }
+            }
+        }
+        
+        if let regex = regex2, let match = regex.firstMatch(in: detailedForecast, range: NSRange(detailedForecast.startIndex..., in: detailedForecast)) {
+            if let percentRange = Range(match.range(at: 1), in: detailedForecast) {
+                if let percent = Double(detailedForecast[percentRange]) {
+                    return percent
+                }
+            }
+        }
+        
+        // Fallback to condition-based estimates
+        if detailedForecast.contains("rain") || detailedForecast.contains("shower") {
+            if detailedForecast.contains("likely") {
+                return 70.0
+            } else if detailedForecast.contains("possible") {
+                return 40.0
+            } else if detailedForecast.contains("slight chance") {
+                return 20.0
+            }
+        }
+        
+        return 0.0 // Default
+    }
+    
+    // Combine day and night precipitation chances
+    private func getCombinedPrecipChance(_ dayPeriod: NWSForecastPeriod, _ nightPeriod: NWSForecastPeriod?) -> Double {
+        // First try to get from probability field
+        var dayChance: Double = dayPeriod.probabilityOfPrecipitation?.value.map { Double($0) } ?? 0.0
+        var nightChance: Double = nightPeriod?.probabilityOfPrecipitation?.value.map { Double($0) } ?? 0.0
+        
+        // If not available, try to extract from text
+        if dayChance == 0 {
+            dayChance = extractPrecipChance(from: dayPeriod.detailedForecast)
+        }
+        
+        if nightChance == 0 && nightPeriod != nil {
+            nightChance = extractPrecipChance(from: nightPeriod!.detailedForecast)
+        }
+        
+        // Return the maximum of the two periods
+        return max(dayChance, nightChance)
     }
 }
 
@@ -426,10 +887,18 @@ struct GeocodingResult: Codable {
 
 // MARK: - Weather Service Factory
 class WeatherServiceFactory {
+    static func createWeatherAPI(for location: CLLocationCoordinate2D) -> WeatherAPIProtocol {
+        if LocationUtils.isLocationInUS(location) {
+            return NWSWeatherAPI()
+        } else {
+            return OpenWeatherMapAPI(apiKey: ApiKeyManager.shared.openWeatherMapApiKey)
+        }
+    }
+    
     static func createService(type: WeatherServiceType) -> WeatherAPIProtocol {
         switch type {
         case .openWeatherMap:
-            return OpenWeatherMapAPI(apiKey: Secrets.openWeatherMapApiKey)
+            return OpenWeatherMapAPI(apiKey: ApiKeyManager.shared.openWeatherMapApiKey)
         case .nationalWeatherService:
             return NWSWeatherAPI()
         }
@@ -441,8 +910,139 @@ class WeatherServiceFactory {
     }
 }
 
-// MARK: - Secret API Keys (never commit actual keys to source control)
-struct Secrets {
-    // In a real app, these would be stored in a more secure way
-    static let openWeatherMapApiKey = "YOUR_API_KEY"
+// MARK: - API Key Management
+class ApiKeyManager {
+    static let shared = ApiKeyManager()
+    
+    private let openWeatherMapApiKeyKey = "openWeatherMapApiKey"
+    private let keychainService = "com.weatherapp.apikeys"
+    
+    private init() {
+        // Initialize with default API keys if needed
+        if openWeatherMapApiKey.isEmpty {
+            // For development, set a default key
+            #if DEBUG
+            setOpenWeatherMapApiKey("YOUR_DEVELOPMENT_KEY")
+            #endif
+        }
+    }
+    
+    var openWeatherMapApiKey: String {
+        get {
+            // Try to get from keychain
+            if let data = KeychainWrapper.standard.data(forKey: openWeatherMapApiKeyKey, service: keychainService),
+               let key = String(data: data, encoding: .utf8) {
+                return key
+            }
+            
+            // Fall back to UserDefaults if keychain fails
+            return UserDefaults.standard.string(forKey: openWeatherMapApiKeyKey) ?? ""
+        }
+    }
+    
+    func setOpenWeatherMapApiKey(_ key: String) {
+        // Store in keychain
+        KeychainWrapper.standard.set(Data(key.utf8), forKey: openWeatherMapApiKeyKey, service: keychainService)
+        
+        // Backup in UserDefaults
+        UserDefaults.standard.set(key, forKey: openWeatherMapApiKeyKey)
+    }
+}
+
+// MARK: - Location Utilities
+class LocationUtils {
+    static func isLocationInUS(_ location: CLLocationCoordinate2D) -> Bool {
+        // Approximate bounding box for the continental US
+        // Note: This is a simplified approach, might not be accurate for all edge cases
+        let usMinLat = 24.396308
+        let usMaxLat = 49.384358
+        let usMinLon = -125.0
+        let usMaxLon = -66.93457
+        
+        // Alaska
+        let akMinLat = 51.0
+        let akMaxLat = 71.5
+        let akMinLon = -180.0
+        let akMaxLon = -129.0
+        
+        // Hawaii
+        let hiMinLat = 18.0
+        let hiMaxLat = 23.0
+        let hiMinLon = -160.0
+        let hiMaxLon = -154.0
+        
+        // Check if the location is within the continental US
+        let inContinentalUS = location.latitude >= usMinLat && location.latitude <= usMaxLat &&
+                              location.longitude >= usMinLon && location.longitude <= usMaxLon
+        
+        // Check if the location is within Alaska
+        let inAlaska = location.latitude >= akMinLat && location.latitude <= akMaxLat &&
+                       location.longitude >= akMinLon && location.longitude <= akMaxLon
+        
+        // Check if the location is within Hawaii
+        let inHawaii = location.latitude >= hiMinLat && location.latitude <= hiMaxLat &&
+                       location.longitude >= hiMinLon && location.longitude <= hiMaxLon
+        
+        return inContinentalUS || inAlaska || inHawaii
+    }
+    
+    // For more accurate results, a reverse geocoding approach could be used
+    static func isLocationInUSUsingGeocoder(_ location: CLLocationCoordinate2D) -> AnyPublisher<Bool, Error> {
+        let geocoder = CLGeocoder()
+        let clLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        
+        return Future<Bool, Error> { promise in
+            geocoder.reverseGeocodeLocation(clLocation) { placemarks, error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                
+                if let countryCode = placemarks?.first?.isoCountryCode {
+                    promise(.success(countryCode == "US"))
+                } else {
+                    // Fall back to bounding box method if geocoding fails
+                    promise(.success(self.isLocationInUS(location)))
+                }
+            }
+        }.eraseToAnyPublisher()
+    }
+}
+
+// MARK: - Simple Keychain Wrapper for API Keys
+class KeychainWrapper {
+    static let standard = KeychainWrapper()
+    
+    private init() {}
+    
+    func set(_ data: Data, forKey key: String, service: String) -> Bool {
+        let query = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrService as String: service,
+            kSecValueData as String: data
+        ] as [String: Any]
+        
+        // First try to delete any existing key
+        SecItemDelete(query as CFDictionary)
+        
+        // Then add the new key
+        let status = SecItemAdd(query as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+    
+    func data(forKey key: String, service: String) -> Data? {
+        let query = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ] as [String: Any]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        return status == errSecSuccess ? result as? Data : nil
+    }
 }
