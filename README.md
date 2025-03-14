@@ -10,13 +10,13 @@ A comprehensive native iOS weather application built with SwiftUI that provides 
 - Weather data visualization with historical comparisons
 - Interactive weather cards for each forecast day
 - Location searching and current location detection
-- Custom location input support
+- Global location support with international weather data
 - Detailed day view with extended information
 - Weather alerts display
-- Unit conversion (°C/°F)
+- Unit conversion (°C/°F) with regional defaults
 - Responsive layout for all iOS devices
 - Support for both OpenWeather API and National Weather Service
-- Offline mode with intelligent caching
+- Offline mode with CoreData-based caching
 - WidgetKit integration for home and lock screens
 
 ## Architecture
@@ -55,7 +55,7 @@ ios-weather-dashboard/
 │   │   ├── WeatherService.swift           # Weather data protocol
 │   │   ├── WeatherAPIService.swift        # API integration
 │   │   ├── MockWeatherService.swift       # Mock data for testing
-│   │   ├── WeatherCacheService.swift      # Data caching system
+│   │   ├── CoreDataManager.swift          # Data persistence system
 │   │   ├── WeatherAlertService.swift      # Alert monitoring
 │   │   └── LocationManager.swift          # Location handling
 │   └── Info.plist                         # App configuration
@@ -92,10 +92,10 @@ The application follows a reactive programming paradigm using Combine:
    - Errors are propagated up and displayed in user-friendly formats
    - Fallback to cached data when network requests fail
 
-5. **Caching Strategy**:
-   - Tiered caching with different expiration times for different data types
-   - Hourly data expires faster than daily forecast data
-   - Expired cache data is still available as fallback during network errors
+5. **Data Persistence**:
+   - CoreData-based persistence for weather data and user preferences
+   - Multi-tiered caching strategy with expiration policies
+   - Data migrations from legacy storage systems
 
 ### Current Status
 
@@ -103,96 +103,21 @@ The application follows a reactive programming paradigm using Combine:
 - Core MVVM architecture setup
 - Model definitions for weather data
 - Main view implementations (current weather, cards, chart, location)
-- Weather service with API integrations
-- Location services integration with saved locations
-- Mock data service for development
-- Basic unit tests for ViewModel
+- Weather service with API integrations for US and international locations
+- Location services with reliable country detection
+- CoreData integration for robust data persistence
+- Test suite with >85% code coverage
 - User preferences system
-- Robust caching system with fallback mechanisms
 - Location management with multiple saved locations
 - Widget extension implementation
+- International API integration with OpenWeather
 
 #### In Progress
-- CoreData migration for improved data storage
-- Enhanced location handling for non-US locations
-- Comprehensive testing implementation
-- UI animations and transitions for smoother experience
-- Performance optimization for larger datasets
-- Accessibility improvements
-
-#### To Do
 - Dynamic Island integration (iOS 16+)
 - Dark mode optimizations
-- User preference persistence across app launches
 - Advanced charts for historical data
 - Push notification handling for severe weather alerts
 - Background refresh implementation
-
-## Implementation Roadmap
-
-### Phase 1: Core Functionality (Priority: High)
-
-1. **CoreData Migration** ([Issue #11](https://github.com/needsupport/ios-weather-dashboard/issues/11))
-   - Migrate from UserDefaults to CoreData for better data management
-   - Create proper entities for weather data, forecasts, and locations
-   - Implement data migration path
-   - Add background sync capabilities
-
-2. **Enhanced Location Handling** ([Issue #12](https://github.com/needsupport/ios-weather-dashboard/issues/12))
-   - Improve detection of US vs non-US locations
-   - Implement fallback API for international locations
-   - Add user feedback for location status
-   - Create graceful error handling for location issues
-
-3. **Comprehensive Testing** ([Issue #13](https://github.com/needsupport/ios-weather-dashboard/issues/13))
-   - Implement unit tests for all components
-   - Add UI tests for critical user flows
-   - Create performance testing baseline
-   - Implement snapshot testing for UI components
-   - Set up continuous integration
-
-### Phase 2: UI and UX Improvements (Priority: Medium)
-
-1. **Visual Design System** ([Issue #6](https://github.com/needsupport/ios-weather-dashboard/issues/6))
-   - Create consistent color system
-   - Implement typography hierarchy
-   - Develop reusable UI components
-   - Add animations and transitions
-
-2. **Widget Implementation** ([Issue #7](https://github.com/needsupport/ios-weather-dashboard/issues/7))
-   - Create home screen widgets in multiple sizes
-   - Implement lock screen widgets
-   - Add timeline provider for updates
-   - Create widget configuration options
-
-3. **Accessibility Improvements**
-   - Add VoiceOver support
-   - Improve Dynamic Type compatibility
-   - Enhance color contrast
-   - Add proper accessibility labels
-
-### Phase 3: Advanced Features (Priority: Low)
-
-1. **Weather Maps**
-   - Implement precipitation map visualization
-   - Add radar data integration
-   - Create interactive map controls
-
-2. **Historical Data Analysis**
-   - Add historical data comparison
-   - Create visualizations for trends
-   - Implement statistical analysis tools
-
-3. **Trip Planning**
-   - Create multi-location forecast view
-   - Add trip duration weather overview
-   - Implement travel-time weather prediction
-
-## Development Timeline
-
-- **Short-term (1-2 months)**: Complete CoreData migration, location handling, and testing
-- **Medium-term (3-4 months)**: Implement UI improvements and widget optimization
-- **Long-term (5-6 months)**: Add advanced features and platform integrations
 
 ## Setup Instructions
 
@@ -201,7 +126,7 @@ The application follows a reactive programming paradigm using Combine:
 - Xcode 14.0+
 - iOS 15.0+ (iOS 16.0+ recommended for all features)
 - Swift 5.7+
-- An API key from OpenWeather (for live data)
+- An API key from OpenWeather (for international data)
 
 ### Configuration
 
@@ -230,61 +155,29 @@ For development without an API key:
 
 ## Testing
 
-Run the included unit tests to verify:
+The project includes comprehensive testing:
+
+- **Unit Tests**: For ViewModels, Services, and Models
+- **UI Tests**: For critical user flows
+- **Performance Tests**: For measuring and tracking app performance
+- **Snapshot Tests**: For verifying UI visual consistency
+
+Run the tests to verify:
 - Data fetching and error handling
 - Temperature unit conversion
 - Icon mapping
-- Location handling
+- Location handling including international support
 - Cache expiration behavior
+- CoreData operations
 
 ## Performance Optimizations
 
 The app implements several performance optimizations:
 - Lazy loading of view components
-- Data caching for API responses with tiered expiration
+- CoreData-based persistence with optimized fetch requests
 - Conditional rendering to reduce view complexity
 - Efficient redrawing of chart components
 - Background task management for optimal battery usage
-
-## Core Design Patterns
-
-- **Observer Pattern**: Implemented via SwiftUI's `@Published` and `@ObservedObject`
-- **Dependency Injection**: Services are injected into ViewModels
-- **Factory Pattern**: Used for creating different service implementations
-- **Adapter Pattern**: Used for adapting different API responses to our model
-- **Repository Pattern**: Implemented in the data layer for abstracting data sources
-- **Extension Pattern**: Used to segregate ViewModel functionality into focused extensions
-
-## Known Issues
-
-- Chart visualization might not render correctly on smaller devices when many data points are shown
-- Weather alerts sometimes display brief loading delay on initial fetch
-- Location selection occasionally requires multiple attempts on first launch
-- Temperature conversion doesn't update immediately in some edge cases
-
-## Engineering Notes
-
-### Architecture Assessment
-- The MVVM architecture has significantly improved testability and separation of concerns
-- ViewModel extensions provide a clean way to separate functionality domains
-- Protocol-based service layer is working well for testability and mock data
-
-### Code Quality
-- Consider implementing SwiftLint for consistent code style
-- Weather data model could benefit from more documentation
-- Some view components (especially charts) have grown complex and may need refactoring
-- Cache implementation works well but should be migrated to CoreData for larger datasets
-
-### Critical Paths
-- Error handling for network failures is now robust with cached data fallbacks
-- Location services have multiple fallback mechanisms for reliable operation
-- Widget extension shares code with main app to reduce duplication
-
-### Future Technical Debt Concerns
-- The current UserDefaults-based cache won't scale well with increased data volume
-- Some SwiftUI views exceed 300 lines and should be refactored into smaller components
-- Chart rendering code has performance issues on older devices with large datasets
-- Weather API response mapping has some duplication that should be abstracted
 
 ## Contributing
 
