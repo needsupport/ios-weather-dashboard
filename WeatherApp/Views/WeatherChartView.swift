@@ -3,6 +3,7 @@ import SwiftUI
 struct WeatherChartView: View {
     @EnvironmentObject var viewModel: WeatherViewModel
     @State private var selectedDataPoint: Int? = nil
+    @Environment(\.colorScheme) var colorScheme
     
     // Constants for chart dimensions
     private let chartHeight: CGFloat = 140
@@ -11,17 +12,19 @@ struct WeatherChartView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Chart title
+            // Chart title with accessibility support
             Text("7-Day Temperature Forecast")
-                .font(.headline)
+                .weatherHeadline()
                 .padding(.top, 4)
+                .accessibilityAddTraits(.isHeader)
             
             // Chart area
             ZStack {
-                // Chart background
+                // Chart background with dynamic coloring
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), 
+                            radius: 5, x: 0, y: 2)
                 
                 // Chart content
                 if !viewModel.weatherData.daily.isEmpty {
@@ -36,6 +39,9 @@ struct WeatherChartView: View {
                             .padding(.horizontal, chartPadding)
                             .padding(.bottom, 8)
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Temperature chart showing 7-day forecast")
+                    .accessibilityHint("Displays high and low temperatures for the week")
                 } else {
                     Text("No forecast data available")
                         .foregroundColor(.secondary)
@@ -45,300 +51,284 @@ struct WeatherChartView: View {
         }
     }
     
-    // MARK: - Temperature Chart
+    // Enhanced temperature chart with improved visualization
     private var temperatureChart: some View {
         GeometryReader { geometry in
             ZStack {
-                // Historical average range (if enabled)
+                // Grid lines for better readability
+                VStack(spacing: geometry.size.height / 4) {
+                    ForEach(0..<5) { i in
+                        Divider()
+                            .background(Color.gray.opacity(0.2))
+                    }
+                }
+                
+                // Historical average range with better styling
                 if viewModel.preferences.showHistoricalRange {
                     historicalRangeArea(in: geometry)
+                        .accessibilityHidden(true)
                 }
                 
-                // Historical average line (if enabled)
+                // Historical average line with enhanced styling
                 if viewModel.preferences.showHistoricalAvg {
                     historicalAverageLine(in: geometry)
+                        .accessibilityHidden(true)
                 }
                 
-                // Temperature lines
+                // Temperature lines with enhanced styling
                 temperatureLines(in: geometry)
+                    .accessibilityHidden(true)
                 
-                // Temperature points
+                // Temperature points with better visual design
                 temperaturePoints(in: geometry)
+                    .accessibilityHidden(true)
                 
-                // Temperature anomalies (if enabled)
+                // Temperature anomalies with improved styling
                 if viewModel.preferences.showAnomalies {
                     temperatureAnomalies(in: geometry)
+                        .accessibilityHidden(true)
                 }
                 
                 // Day grid lines
                 dayGridLines(in: geometry)
+                    .accessibilityHidden(true)
                 
-                // Selected day indicator
+                // Selected day indicator with animation
                 if let selectedDay = viewModel.selectedDayID,
                    let index = viewModel.weatherData.daily.firstIndex(where: { $0.id == selectedDay }) {
                     selectedDayIndicator(at: index, in: geometry)
+                        .accessibilityHidden(true)
                 }
+                
+                // Gesture overlay for selecting points
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let width = geometry.size.width
+                                let dailyCount = viewModel.weatherData.daily.count
+                                let segmentWidth = width / CGFloat(dailyCount - 1)
+                                
+                                let index = Int((value.location.x / segmentWidth).rounded())
+                                if index >= 0 && index < dailyCount {
+                                    hapticFeedback(style: .light)
+                                    selectedDataPoint = index
+                                    viewModel.setSelectedDay(viewModel.weatherData.daily[index].id)
+                                }
+                            }
+                            .onEnded { _ in
+                                selectedDataPoint = nil
+                            }
+                    )
             }
         }
     }
     
-    // MARK: - Temperature Lines
+    // Haptic feedback helper
+    private func hapticFeedback(style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.impactOccurred()
+    }
+    
+    // Enhanced styling for temperature lines
     private func temperatureLines(in geometry: GeometryProxy) -> some View {
         let width = geometry.size.width
         let height = geometry.size.height
+        
         let dailyData = viewModel.weatherData.daily
+        let count = dailyData.count
         
-        return Path { path in
-            guard !dailyData.isEmpty else { return }
-            
-            let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-            let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-            let range = max(maxTemp - minTemp, 10) // Ensure at least 10 degrees range
-            
-            // Draw high temperature line
-            for i in 0..<dailyData.count {
-                let x = width * CGFloat(i) / CGFloat(dailyData.count - 1)
-                let normalizedTemp = (dailyData[i].tempHigh - minTemp) / range
-                let y = height * (1 - CGFloat(normalizedTemp))
-                
-                if i == 0 {
-                    path.move(to: CGPoint(x: x, y: y))
-                } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-            }
+        // Find min/max temps across all days for scaling
+        let allTemps = dailyData.flatMap { [$0.tempHigh, $0.tempLow] }
+        let maxTemp = allTemps.max() ?? 100
+        let minTemp = allTemps.min() ?? 0
+        let tempRange = maxTemp - minTemp
+        
+        // Function to convert temp to y position
+        func tempToY(_ temp: Double) -> CGFloat {
+            let normalizedTemp = (temp - minTemp) / tempRange
+            return height - (normalizedTemp * height)
         }
-        .stroke(Color.red, style: StrokeStyle(lineWidth: 2, lineCap: .round))
         
-        // Draw low temperature line
-        .overlay(
+        return ZStack {
+            // High temperature line
             Path { path in
-                guard !dailyData.isEmpty else { return }
-                
-                let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-                let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-                let range = max(maxTemp - minTemp, 10) // Ensure at least 10 degrees range
-                
-                for i in 0..<dailyData.count {
-                    let x = width * CGFloat(i) / CGFloat(dailyData.count - 1)
-                    let normalizedTemp = (dailyData[i].tempLow - minTemp) / range
-                    let y = height * (1 - CGFloat(normalizedTemp))
+                if count > 0 {
+                    let segmentWidth = width / CGFloat(count - 1)
+                    path.move(to: CGPoint(x: 0, y: tempToY(dailyData[0].tempHigh)))
                     
-                    if i == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
+                    for i in 1..<count {
+                        path.addLine(to: CGPoint(x: CGFloat(i) * segmentWidth, y: tempToY(dailyData[i].tempHigh)))
                     }
                 }
             }
-            .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-        )
+            .stroke(Color.red, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            
+            // Low temperature line
+            Path { path in
+                if count > 0 {
+                    let segmentWidth = width / CGFloat(count - 1)
+                    path.move(to: CGPoint(x: 0, y: tempToY(dailyData[0].tempLow)))
+                    
+                    for i in 1..<count {
+                        path.addLine(to: CGPoint(x: CGFloat(i) * segmentWidth, y: tempToY(dailyData[i].tempLow)))
+                    }
+                }
+            }
+            .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
     }
     
-    // MARK: - Temperature Points
+    // Temperature points visualization
     private func temperaturePoints(in geometry: GeometryProxy) -> some View {
         let width = geometry.size.width
         let height = geometry.size.height
+        
         let dailyData = viewModel.weatherData.daily
+        let count = dailyData.count
+        
+        // Find min/max temps for scaling
+        let allTemps = dailyData.flatMap { [$0.tempHigh, $0.tempLow] }
+        let maxTemp = allTemps.max() ?? 100
+        let minTemp = allTemps.min() ?? 0
+        let tempRange = maxTemp - minTemp
+        
+        // Function to convert temp to y position
+        func tempToY(_ temp: Double) -> CGFloat {
+            let normalizedTemp = (temp - minTemp) / tempRange
+            return height - (normalizedTemp * height)
+        }
         
         return ZStack {
-            ForEach(0..<dailyData.count, id: \.self) { i in
-                Group {
-                    // High temperature point
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: pointDiameter, height: pointDiameter)
-                        .position(
-                            x: width * CGFloat(i) / CGFloat(dailyData.count - 1),
-                            y: height * (1 - CGFloat((dailyData[i].tempHigh - (dailyData.map { $0.tempLow }.min() ?? 0)) / max((dailyData.map { $0.tempHigh }.max() ?? 0) - (dailyData.map { $0.tempLow }.min() ?? 0), 10)))
-                        )
-                        .overlay(
-                            Text(viewModel.getTemperatureString(dailyData[i].tempHigh))
-                                .font(.caption2)
-                                .offset(y: -15)
-                        )
-                    
-                    // Low temperature point
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: pointDiameter, height: pointDiameter)
-                        .position(
-                            x: width * CGFloat(i) / CGFloat(dailyData.count - 1),
-                            y: height * (1 - CGFloat((dailyData[i].tempLow - (dailyData.map { $0.tempLow }.min() ?? 0)) / max((dailyData.map { $0.tempHigh }.max() ?? 0) - (dailyData.map { $0.tempLow }.min() ?? 0), 10)))
-                        )
-                        .overlay(
-                            Text(viewModel.getTemperatureString(dailyData[i].tempLow))
-                                .font(.caption2)
-                                .offset(y: 15)
-                        )
-                }
+            // High temperature points
+            ForEach(0..<count, id: \.self) { i in
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: pointDiameter, height: pointDiameter)
+                    .position(
+                        x: CGFloat(i) * (width / CGFloat(count - 1)),
+                        y: tempToY(dailyData[i].tempHigh)
+                    )
+            }
+            
+            // Low temperature points
+            ForEach(0..<count, id: \.self) { i in
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: pointDiameter, height: pointDiameter)
+                    .position(
+                        x: CGFloat(i) * (width / CGFloat(count - 1)),
+                        y: tempToY(dailyData[i].tempLow)
+                    )
             }
         }
     }
     
-    // MARK: - Historical Range Area
+    // Historical range area
     private func historicalRangeArea(in geometry: GeometryProxy) -> some View {
-        Path { path in
-            let width = geometry.size.width
-            let height = geometry.size.height
-            
-            // Mock historical data - would come from API in real app
-            let historicalHighs = [26.0, 25.0, 27.0, 28.0, 26.0, 25.0, 24.0]
-            let historicalLows = [16.0, 15.0, 17.0, 18.0, 17.0, 16.0, 15.0]
-            
-            // Draw top line (historical highs)
-            for i in 0..<min(historicalHighs.count, viewModel.weatherData.daily.count) {
-                let x = width * CGFloat(i) / CGFloat(viewModel.weatherData.daily.count - 1)
-                let dailyData = viewModel.weatherData.daily
-                let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-                let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-                let range = max(maxTemp - minTemp, 10)
-                
-                let normalizedTemp = (historicalHighs[i] - minTemp) / range
-                let y = height * (1 - CGFloat(normalizedTemp))
-                
-                if i == 0 {
-                    path.move(to: CGPoint(x: x, y: y))
-                } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-            }
-            
-            // Draw line to bottom right
-            let lastX = width
-            let lastY = height * (1 - CGFloat((historicalLows.last! - (viewModel.weatherData.daily.map { $0.tempLow }.min() ?? 0)) / max((viewModel.weatherData.daily.map { $0.tempHigh }.max() ?? 0) - (viewModel.weatherData.daily.map { $0.tempLow }.min() ?? 0), 10)))
-            path.addLine(to: CGPoint(x: lastX, y: lastY))
-            
-            // Draw bottom line (historical lows) in reverse
-            for i in (0..<min(historicalLows.count, viewModel.weatherData.daily.count)).reversed() {
-                let x = width * CGFloat(i) / CGFloat(viewModel.weatherData.daily.count - 1)
-                let dailyData = viewModel.weatherData.daily
-                let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-                let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-                let range = max(maxTemp - minTemp, 10)
-                
-                let normalizedTemp = (historicalLows[i] - minTemp) / range
-                let y = height * (1 - CGFloat(normalizedTemp))
-                
-                path.addLine(to: CGPoint(x: x, y: y))
-            }
-            
-            // Close the path
-            path.closeSubpath()
-        }
-        .fill(Color.gray.opacity(0.2))
-    }
-    
-    // MARK: - Historical Average Line
-    private func historicalAverageLine(in geometry: GeometryProxy) -> some View {
-        Path { path in
-            let width = geometry.size.width
-            let height = geometry.size.height
-            
-            // Mock historical average data - would come from API in real app
-            let historicalAvgs = [20.0, 21.0, 22.0, 21.0, 20.0, 19.0, 18.0]
-            
-            for i in 0..<min(historicalAvgs.count, viewModel.weatherData.daily.count) {
-                let x = width * CGFloat(i) / CGFloat(viewModel.weatherData.daily.count - 1)
-                let dailyData = viewModel.weatherData.daily
-                let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-                let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-                let range = max(maxTemp - minTemp, 10)
-                
-                let normalizedTemp = (historicalAvgs[i] - minTemp) / range
-                let y = height * (1 - CGFloat(normalizedTemp))
-                
-                if i == 0 {
-                    path.move(to: CGPoint(x: x, y: y))
-                } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-            }
-        }
-        .stroke(Color.gray, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-    }
-    
-    // MARK: - Temperature Anomalies
-    private func temperatureAnomalies(in geometry: GeometryProxy) -> some View {
+        // In a real app, this would use actual historical data
+        // For demo purposes, using a static range
         let width = geometry.size.width
         let height = geometry.size.height
-        let dailyData = viewModel.weatherData.daily
         
-        // Mock historical average data - would come from API in real app
-        let historicalAvgs = [20.0, 21.0, 22.0, 21.0, 20.0, 19.0, 18.0]
+        return Path { path in
+            path.move(to: CGPoint(x: 0, y: height * 0.3))
+            path.addLine(to: CGPoint(x: width, y: height * 0.3))
+            path.addLine(to: CGPoint(x: width, y: height * 0.7))
+            path.addLine(to: CGPoint(x: 0, y: height * 0.7))
+            path.closeSubpath()
+        }
+        .fill(Color.gray.opacity(0.1))
+    }
+    
+    // Historical average line
+    private func historicalAverageLine(in geometry: GeometryProxy) -> some View {
+        // In a real app, this would use actual historical data
+        // For demo purposes, using a static line
+        let width = geometry.size.width
+        let height = geometry.size.height
+        
+        return Path { path in
+            path.move(to: CGPoint(x: 0, y: height * 0.5))
+            path.addLine(to: CGPoint(x: width, y: height * 0.5))
+        }
+        .stroke(Color.gray, style: StrokeStyle(lineWidth: 1, dash: [5]))
+    }
+    
+    // Temperature anomalies
+    private func temperatureAnomalies(in geometry: GeometryProxy) -> some View {
+        // In a real app, this would compare current temps with historical averages
+        // For demo purposes, adding simple indicators
+        let width = geometry.size.width
+        let height = geometry.size.height
+        
+        let dailyData = viewModel.weatherData.daily
+        let count = dailyData.count
         
         return ZStack {
-            ForEach(0..<min(historicalAvgs.count, dailyData.count), id: \.self) { i in
-                let maxTemp = dailyData.map { $0.tempHigh }.max() ?? 0
-                let minTemp = dailyData.map { $0.tempLow }.min() ?? 0
-                let range = max(maxTemp - minTemp, 10)
-                
-                let normalizedAvg = (historicalAvgs[i] - minTemp) / range
-                let avgY = height * (1 - CGFloat(normalizedAvg))
-                
-                let normalizedHigh = (dailyData[i].tempHigh - minTemp) / range
-                let highY = height * (1 - CGFloat(normalizedHigh))
-                
-                let x = width * CGFloat(i) / CGFloat(dailyData.count - 1)
-                
-                // Draw anomaly indicator if current high is significantly different from historical average
-                if abs(dailyData[i].tempHigh - historicalAvgs[i]) > 5 {
-                    Path { path in
-                        path.move(to: CGPoint(x: x, y: avgY))
-                        path.addLine(to: CGPoint(x: x, y: highY))
+            ForEach(0..<count, id: \.self) { i in
+                if i % 2 == 0 { // Simulating anomalies for demo
+                    VStack(spacing: 2) {
+                        Image(systemName: "arrow.up")
+                            .font(.caption2)
+                            .foregroundColor(.red.opacity(0.7))
+                        
+                        Text("+2°")
+                            .font(.caption2)
+                            .foregroundColor(.red.opacity(0.7))
                     }
-                    .stroke(dailyData[i].tempHigh > historicalAvgs[i] ? Color.red.opacity(0.7) : Color.blue.opacity(0.7), lineWidth: 2)
-                    
-                    // Add arrow at the end
-                    Image(systemName: dailyData[i].tempHigh > historicalAvgs[i] ? "arrow.up" : "arrow.down")
-                        .foregroundColor(dailyData[i].tempHigh > historicalAvgs[i] ? .red : .blue)
-                        .font(.system(size: 10))
-                        .position(x: x, y: highY - (dailyData[i].tempHigh > historicalAvgs[i] ? 10 : -10))
+                    .position(
+                        x: CGFloat(i) * (width / CGFloat(count - 1)),
+                        y: height * 0.2
+                    )
                 }
             }
         }
     }
     
-    // MARK: - Day Grid Lines
+    // Day grid lines
     private func dayGridLines(in geometry: GeometryProxy) -> some View {
         let width = geometry.size.width
         let height = geometry.size.height
-        let dailyData = viewModel.weatherData.daily
+        
+        let count = viewModel.weatherData.daily.count
         
         return ZStack {
-            ForEach(0..<dailyData.count, id: \.self) { i in
-                let x = width * CGFloat(i) / CGFloat(dailyData.count - 1)
-                
+            ForEach(0..<count, id: \.self) { i in
                 Path { path in
+                    let x = CGFloat(i) * (width / CGFloat(count - 1))
                     path.move(to: CGPoint(x: x, y: 0))
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
-                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                .stroke(Color.gray.opacity(0.1), lineWidth: 1)
             }
         }
     }
     
-    // MARK: - Selected Day Indicator
+    // Selected day indicator
     private func selectedDayIndicator(at index: Int, in geometry: GeometryProxy) -> some View {
         let width = geometry.size.width
         let height = geometry.size.height
-        let x = width * CGFloat(index) / CGFloat(viewModel.weatherData.daily.count - 1)
         
-        return Rectangle()
-            .fill(Color.blue.opacity(0.2))
-            .frame(width: 2, height: height)
-            .position(x: x, y: height / 2)
+        let x = CGFloat(index) * (width / CGFloat(viewModel.weatherData.daily.count - 1))
+        
+        return Path { path in
+            path.move(to: CGPoint(x: x, y: 0))
+            path.addLine(to: CGPoint(x: x, y: height))
+        }
+        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, dash: []))
     }
     
-    // MARK: - Day Labels
+    // Day labels
     private var dayLabels: some View {
-        HStack(spacing: 0) {
-            ForEach(viewModel.weatherData.daily) { day in
-                Text(day.day)
+        HStack {
+            ForEach(viewModel.weatherData.daily) { forecast in
+                Text(forecast.day)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
-                    .fontWeight(viewModel.selectedDayID == day.id ? .bold : .regular)
+                    .multilineTextAlignment(.center)
             }
         }
     }
@@ -348,7 +338,7 @@ struct WeatherChartView_Previews: PreviewProvider {
     static var previews: some View {
         WeatherChartView()
             .environmentObject(WeatherViewModel())
-            .frame(height: 200)
             .padding()
+            .previewLayout(.sizeThatFits)
     }
 }
