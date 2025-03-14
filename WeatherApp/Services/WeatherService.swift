@@ -9,6 +9,8 @@ enum WeatherError: Error, LocalizedError {
     case decodingError(Error)
     case apiError(String)
     case noData
+    case locationOutsideUS
+    case unsupportedLocation
     
     var errorDescription: String? {
         switch self {
@@ -22,6 +24,10 @@ enum WeatherError: Error, LocalizedError {
             return "API error: \(message)"
         case .noData:
             return "No data received"
+        case .locationOutsideUS:
+            return "Location is outside the US. Using demo data."
+        case .unsupportedLocation:
+            return "This location is not supported. Using demo data."
         }
     }
 }
@@ -29,13 +35,14 @@ enum WeatherError: Error, LocalizedError {
 // MARK: - Service Protocol
 protocol WeatherServiceProtocol {
     func fetchWeather(for coordinates: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<(WeatherData, [WeatherAlert]), Error>
+    func fetchWeather(for cityName: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<(WeatherData, [WeatherAlert]), Error>
 }
 
 // MARK: - Service Implementation
 class WeatherService: WeatherServiceProtocol {
-    // MARK: - API Keys and Configuration
-    private let openWeatherApiKey = "YOUR_OPENWEATHER_API_KEY" // Replace with your actual API key
-    private let weatherKitEndpoint = "https://api.example.com/weatherkit" // Replace with actual endpoint
+    // MARK: - Private Properties
+    private let nwsAPI = NWSWeatherAPI()
+    private let cacheManager = WeatherCacheManager.shared
     
     // Demo data - used for preview and offline fallback
     private let demoData: WeatherData = {
@@ -90,6 +97,16 @@ class WeatherService: WeatherServiceProtocol {
             }
         }
         
+        // Create metadata
+        let metadata = WeatherMetadata(
+            office: "Demo",
+            gridX: "0",
+            gridY: "0",
+            timezone: TimeZone.current.identifier,
+            updated: dateFormatter.string(from: Date())
+        )
+        data.metadata = metadata
+        
         return data
     }()
     
@@ -106,82 +123,218 @@ class WeatherService: WeatherServiceProtocol {
         return formatter
     }()
     
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+    
     // MARK: - Public Methods
     func fetchWeather(for coordinates: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<(WeatherData, [WeatherAlert]), Error> {
-        // For testing purposes, you can use the demo data instead of making an actual API call
-        // Comment out the return statement below to implement the actual API call
-        
-        // Uncomment for testing with demo data
-        // return Just((demoData, getDemoAlerts()))
-        //     .delay(for: .seconds(1.5), scheduler: RunLoop.main) // Simulate network delay
-        //     .setFailureType(to: Error.self)
-        //     .eraseToAnyPublisher()
-        
-        // Actual API implementation
-        let unitString = unit == .celsius ? "metric" : "imperial"
         let components = coordinates.split(separator: ",")
         
         guard components.count == 2,
               let lat = Double(components[0]),
-              let lon = Double(components[1]),
-              let url = URL(string: "https://api.openweathermap.org/data/2.5/onecall?lat=\(lat)&lon=\(lon)&exclude=minutely&units=\(unitString)&appid=\(openWeatherApiKey)") else {
+              let lon = Double(components[1]) else {
             return Fail(error: WeatherError.invalidURL).eraseToAnyPublisher()
         }
         
-        // Get location name using reverse geocoding
-        let geocoder = CLGeocoder()
-        let location = CLLocation(latitude: lat, longitude: lon)
+        let location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        let cacheKey = "weather-\(coordinates)-\(unit.rawValue)"
         
-        return URLSession.shared.dataTaskPublisher(for: url)
-            .mapError { WeatherError.networkError($0) }
-            .flatMap { data, response -> AnyPublisher<(WeatherData, [WeatherAlert], CLPlacemark?), Error> in
-                // Parse API response
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .secondsSince1970
-                
-                // We would need to parse the OpenWeather API response here
-                // This is a placeholder for the actual implementation
-                
-                // For demo purposes, we'll use the demo data
-                var weatherData = self.demoData
-                
-                // Get location name using reverse geocoding
-                return Future<CLPlacemark?, Error> { promise in
-                    geocoder.reverseGeocodeLocation(location) { placemarks, error in
-                        if let error = error {
-                            print("Geocoding error: \(error.localizedDescription)")
-                            promise(.success(nil))
-                            return
-                        }
-                        promise(.success(placemarks?.first))
-                    }
-                }
-                .map { placemark -> (WeatherData, [WeatherAlert], CLPlacemark?) in
-                    if let placemark = placemark {
-                        var locationString = ""
-                        if let locality = placemark.locality {
-                            locationString += locality
-                        }
-                        if let administrativeArea = placemark.administrativeArea {
-                            if !locationString.isEmpty {
-                                locationString += ", "
-                            }
-                            locationString += administrativeArea
-                        }
-                        weatherData.location = locationString
-                    }
-                    return (weatherData, self.getDemoAlerts(), placemark)
-                }
+        // Check if we have cached data
+        if let cachedData = cacheManager.getWeatherData(for: cacheKey),
+           let cachedAlerts = cacheManager.getWeatherAlerts(for: cacheKey) {
+            print("Using cached weather data for \(coordinates)")
+            return Just((cachedData, cachedAlerts))
                 .setFailureType(to: Error.self)
                 .eraseToAnyPublisher()
+        }
+        
+        // Check if location is in the US
+        return isUSLocation(location)
+            .flatMap { isUS -> AnyPublisher<APIResponse, WeatherError> in
+                if isUS {
+                    // Use NWS API for US locations
+                    print("Using NWS API for US location: \(coordinates)")
+                    return self.nwsAPI.fetchWeatherData(for: location, unit: unit)
+                } else {
+                    // For non-US locations, use demo data
+                    print("Location outside US, using demo data for: \(coordinates)")
+                    return self.useDemoData(for: location)
+                        .mapError { $0 as? WeatherError ?? WeatherError.apiError($0.localizedDescription) }
+                        .eraseToAnyPublisher()
+                }
             }
-            .map { weatherData, alerts, _ in
+            .map { apiResponse -> (WeatherData, [WeatherAlert]) in
+                // Cache the results
+                self.cacheManager.saveWeatherData(apiResponse.weatherData, for: cacheKey)
+                self.cacheManager.saveWeatherAlerts(apiResponse.alerts, for: cacheKey)
+                
+                return (apiResponse.weatherData, apiResponse.alerts)
+            }
+            .catch { error -> AnyPublisher<(WeatherData, [WeatherAlert]), Error> in
+                // On error, try to use cached data if available
+                if let cachedData = self.cacheManager.getWeatherData(for: cacheKey),
+                   let cachedAlerts = self.cacheManager.getWeatherAlerts(for: cacheKey) {
+                    print("Error fetching data, using cached data for \(coordinates): \(error.localizedDescription)")
+                    return Just((cachedData, cachedAlerts))
+                        .setFailureType(to: Error.self)
+                        .eraseToAnyPublisher()
+                }
+                
+                // If no cached data, use demo data and add the error as an "alert"
+                print("No cached data available, using demo data with error alert: \(error.localizedDescription)")
+                var demoData = self.demoData
+                let errorAlert = WeatherAlert(
+                    id: "error-alert",
+                    headline: "Data Error",
+                    description: error.localizedDescription,
+                    severity: "minor",
+                    event: "API Error",
+                    start: Date(),
+                    end: Date().addingTimeInterval(86400)
+                )
+                
+                // Update location in demo data
+                self.updateLocationName(in: &demoData, for: location)
+                
+                // Return demo data with error alert
+                return Just((demoData, [errorAlert]))
+                    .setFailureType(to: Error.self)
+                    .eraseToAnyPublisher()
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    func fetchWeather(for cityName: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<(WeatherData, [WeatherAlert]), Error> {
+        let cacheKey = "city-\(cityName)-\(unit.rawValue)"
+        
+        // Check if we have cached data
+        if let cachedData = cacheManager.getWeatherData(for: cacheKey),
+           let cachedAlerts = cacheManager.getWeatherAlerts(for: cacheKey) {
+            print("Using cached weather data for city: \(cityName)")
+            return Just((cachedData, cachedAlerts))
+                .setFailureType(to: Error.self)
+                .eraseToAnyPublisher()
+        }
+        
+        // Try to geocode the city name to get coordinates
+        return geocodeCity(cityName)
+            .flatMap { location in
+                // Convert to string coordinates and call the other method
+                let coordinates = "\(location.latitude),\(location.longitude)"
+                return self.fetchWeather(for: coordinates, unit: unit)
+            }
+            .map { weatherData, alerts -> (WeatherData, [WeatherAlert]) in
+                // Cache the results
+                self.cacheManager.saveWeatherData(weatherData, for: cacheKey)
+                self.cacheManager.saveWeatherAlerts(alerts, for: cacheKey)
+                
                 return (weatherData, alerts)
             }
             .eraseToAnyPublisher()
     }
     
     // MARK: - Helper Methods
+    
+    /// Check if location is in the US
+    private func isUSLocation(_ location: CLLocationCoordinate2D) -> AnyPublisher<Bool, WeatherError> {
+        let geocoder = CLGeocoder()
+        let clLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        
+        return Future<Bool, WeatherError> { promise in
+            geocoder.reverseGeocodeLocation(clLocation) { placemarks, error in
+                if let error = error {
+                    print("Geocoding error: \(error.localizedDescription)")
+                    promise(.success(false))
+                    return
+                }
+                
+                if let placemark = placemarks?.first,
+                   let countryCode = placemark.isoCountryCode {
+                    promise(.success(countryCode == "US"))
+                } else {
+                    promise(.success(false))
+                }
+            }
+        }.eraseToAnyPublisher()
+    }
+    
+    /// Get coordinates from city name
+    private func geocodeCity(_ cityName: String) -> AnyPublisher<CLLocationCoordinate2D, Error> {
+        let geocoder = CLGeocoder()
+        
+        return Future<CLLocationCoordinate2D, Error> { promise in
+            geocoder.geocodeAddressString(cityName) { placemarks, error in
+                if let error = error {
+                    promise(.failure(WeatherError.apiError("Geocoding error: \(error.localizedDescription)")))
+                    return
+                }
+                
+                guard let location = placemarks?.first?.location else {
+                    promise(.failure(WeatherError.apiError("Location not found")))
+                    return
+                }
+                
+                promise(.success(location.coordinate))
+            }
+        }.eraseToAnyPublisher()
+    }
+    
+    /// Create demo data for a specific location
+    private func useDemoData(for location: CLLocationCoordinate2D) -> AnyPublisher<APIResponse, Error> {
+        var demoData = self.demoData
+        
+        return updateLocationName(in: &demoData, for: location)
+            .map { locationName -> APIResponse in
+                demoData.location = locationName
+                return APIResponse(weatherData: demoData, alerts: self.getDemoAlerts())
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Update the location name in demo data
+    private func updateLocationName(in weatherData: inout WeatherData, for location: CLLocationCoordinate2D) -> AnyPublisher<String, Error> {
+        let geocoder = CLGeocoder()
+        let clLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        
+        return Future<String, Error> { promise in
+            geocoder.reverseGeocodeLocation(clLocation) { placemarks, error in
+                if let error = error {
+                    print("Geocoding error: \(error.localizedDescription)")
+                    promise(.success(weatherData.location))
+                    return
+                }
+                
+                if let placemark = placemarks?.first {
+                    var locationName = ""
+                    
+                    if let locality = placemark.locality {
+                        locationName = locality
+                    }
+                    
+                    if let adminArea = placemark.administrativeArea, !adminArea.isEmpty {
+                        if !locationName.isEmpty {
+                            locationName += ", "
+                        }
+                        locationName += adminArea
+                    }
+                    
+                    if locationName.isEmpty && placemark.name != nil {
+                        locationName = placemark.name!
+                    }
+                    
+                    promise(.success(locationName.isEmpty ? "Unknown Location" : locationName))
+                } else {
+                    promise(.success(weatherData.location))
+                }
+            }
+        }.eraseToAnyPublisher()
+    }
+    
+    /// Generate demo weather alerts
     private func getDemoAlerts() -> [WeatherAlert] {
         // Generate random demo weather alerts
         let alertTypes = [
