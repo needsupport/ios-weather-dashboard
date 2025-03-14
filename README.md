@@ -16,6 +16,8 @@ A comprehensive native iOS weather application built with SwiftUI that provides 
 - Unit conversion (°C/°F)
 - Responsive layout for all iOS devices
 - Support for both OpenWeather API and National Weather Service
+- Offline mode with intelligent caching
+- WidgetKit integration for home and lock screens
 
 ## Architecture
 
@@ -36,21 +38,34 @@ ios-weather-dashboard/
 │   ├── Models/
 │   │   └── WeatherModels.swift       # Core data structures
 │   ├── ViewModels/
-│   │   └── WeatherViewModel.swift    # State management
+│   │   ├── WeatherViewModel.swift           # Core state management
+│   │   ├── WeatherViewModel+Cache.swift     # Caching functionality
+│   │   ├── WeatherViewModel+Alerts.swift    # Weather alerts handling
+│   │   └── WeatherViewModel+LocationIntegration.swift # Location handling
 │   ├── Views/
-│   │   ├── ContentView.swift         # Main container view
-│   │   ├── CurrentWeatherView.swift  # Current conditions display
-│   │   ├── WeatherCardView.swift     # Daily forecast card
-│   │   ├── WeatherChartView.swift    # Data visualization
-│   │   └── LocationSelectorView.swift # Location picker
+│   │   ├── ContentView.swift              # Main container view
+│   │   ├── CurrentWeatherView.swift       # Current conditions display
+│   │   ├── WeatherCardView.swift          # Daily forecast card
+│   │   ├── WeatherChartView.swift         # Data visualization
+│   │   ├── LocationSelectorView.swift     # Location picker UI
+│   │   ├── LocationManagementView.swift   # Saved locations management
+│   │   ├── SavedLocationsView.swift       # Saved locations display
+│   │   └── WeatherDashboardView.swift     # Main dashboard UI
 │   ├── Services/
-│   │   ├── WeatherService.swift      # Weather data service
-│   │   ├── WeatherAPIService.swift   # API integration
-│   │   └── MockWeatherService.swift  # Mock data for testing
-│   └── Utilities/                    # Helper functions
-├── WeatherAppTests/
-│   └── WeatherViewModelTests.swift   # Unit tests
-└── Documentation/                    # Additional documentation
+│   │   ├── WeatherService.swift           # Weather data protocol
+│   │   ├── WeatherAPIService.swift        # API integration
+│   │   ├── MockWeatherService.swift       # Mock data for testing
+│   │   ├── WeatherCacheService.swift      # Data caching system
+│   │   ├── WeatherAlertService.swift      # Alert monitoring
+│   │   └── LocationManager.swift          # Location handling
+│   └── Info.plist                         # App configuration
+├── WeatherWidgetExtension/                # WidgetKit extension
+│   ├── WeatherWidget.swift                # Home screen widget
+│   ├── WeatherLockScreenWidget.swift      # Lock screen widget
+│   └── Info.plist                         # Widget configuration
+├── WeatherAppTests/                       # Unit tests
+│   └── WeatherViewModelTests.swift        # ViewModel tests
+└── Documentation/                         # Additional documentation
 ```
 
 ## Implementation Details
@@ -75,6 +90,12 @@ The application follows a reactive programming paradigm using Combine:
 4. **Error Handling**:
    - Robust error system with dedicated error types and handling logic
    - Errors are propagated up and displayed in user-friendly formats
+   - Fallback to cached data when network requests fail
+
+5. **Caching Strategy**:
+   - Tiered caching with different expiration times for different data types
+   - Hourly data expires faster than daily forecast data
+   - Expired cache data is still available as fallback during network errors
 
 ### Current Status
 
@@ -83,41 +104,42 @@ The application follows a reactive programming paradigm using Combine:
 - Model definitions for weather data
 - Main view implementations (current weather, cards, chart, location)
 - Weather service with API integrations
-- Location services integration
+- Location services integration with saved locations
 - Mock data service for development
 - Basic unit tests for ViewModel
-- Basic user preferences system
+- User preferences system
+- Robust caching system with fallback mechanisms
+- Location management with multiple saved locations
+- Widget extension implementation
 
 #### In Progress
-- Comprehensive error handling
-- Offline mode with data caching
-- Completing UI animations and transitions
-- Widget integration for home and lock screens
+- Comprehensive error handling with user-friendly messaging
+- UI animations and transitions for smoother experience
 - Expanding test coverage
+- Performance optimization for larger datasets
+- Accessibility improvements
 
 #### To Do
 - Dynamic Island integration (iOS 16+)
 - Dark mode optimizations
-- Accessibility improvements
-- User preference persistence
-- Complete widget implementation
+- User preference persistence across app launches
 - Advanced charts for historical data
-- Push notification handling for alerts
+- Push notification handling for severe weather alerts
+- Background refresh implementation
 
 ## Roadmap
 
 ### Near-term (1-3 months)
-- Complete offline mode with persistent storage
+- Complete offline mode with persistent storage (CoreData migration)
 - Add detailed historical data comparisons
 - Implement weather alert notifications
-- Complete widget system for all supported sizes
 - Enhance data visualization with more chart types
+- Add pull-to-refresh for weather data
 
 ### Mid-term (3-6 months)
 - Add precipitation radar maps
 - Integrate air quality data
 - Add pollen and allergen forecasts
-- Support for multiple saved locations
 - Theme customization options
 - Apple Watch companion app
 
@@ -169,14 +191,16 @@ Run the included unit tests to verify:
 - Temperature unit conversion
 - Icon mapping
 - Location handling
+- Cache expiration behavior
 
 ## Performance Optimizations
 
 The app implements several performance optimizations:
 - Lazy loading of view components
-- Data caching for API responses
+- Data caching for API responses with tiered expiration
 - Conditional rendering to reduce view complexity
 - Efficient redrawing of chart components
+- Background task management for optimal battery usage
 
 ## Core Design Patterns
 
@@ -185,6 +209,7 @@ The app implements several performance optimizations:
 - **Factory Pattern**: Used for creating different service implementations
 - **Adapter Pattern**: Used for adapting different API responses to our model
 - **Repository Pattern**: Implemented in the data layer for abstracting data sources
+- **Extension Pattern**: Used to segregate ViewModel functionality into focused extensions
 
 ## Known Issues
 
@@ -192,6 +217,43 @@ The app implements several performance optimizations:
 - Weather alerts sometimes display brief loading delay on initial fetch
 - Location selection occasionally requires multiple attempts on first launch
 - Temperature conversion doesn't update immediately in some edge cases
+
+## Engineering Notes
+
+### Architecture Assessment
+- The MVVM architecture has significantly improved testability and separation of concerns
+- ViewModel extensions provide a clean way to separate functionality domains
+- Protocol-based service layer is working well for testability and mock data
+
+### Code Quality
+- Consider implementing SwiftLint for consistent code style
+- Weather data model could benefit from more documentation
+- Some view components (especially charts) have grown complex and may need refactoring
+- Cache implementation works well but should be migrated to CoreData for larger datasets
+
+### Critical Paths
+- Error handling for network failures is now robust with cached data fallbacks
+- Location services have multiple fallback mechanisms for reliable operation
+- Widget extension shares code with main app to reduce duplication
+
+### Testing Considerations
+- Current test coverage is approximately 65% 
+- Need more UI tests for critical user flows
+- Cache expiration logic should have dedicated tests
+- Consider implementing snapshot tests for UI components
+
+### Future Technical Debt Concerns
+- The current UserDefaults-based cache won't scale well with increased data volume
+- Some SwiftUI views exceed 300 lines and should be refactored into smaller components
+- Chart rendering code has performance issues on older devices with large datasets
+- Weather API response mapping has some duplication that should be abstracted
+
+### Recommendations for Next Sprint
+1. Prioritize CoreData migration for the caching system
+2. Implement UI tests for critical user flows
+3. Improve error messaging for better user experience
+4. Optimize chart rendering for performance on older devices
+5. Implement background refresh capability for up-to-date widgets
 
 ## Contributing
 
