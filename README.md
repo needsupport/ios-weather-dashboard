@@ -2,73 +2,116 @@
 
 A comprehensive native iOS weather application built with SwiftUI that provides detailed weather forecasts, historical data comparison, and interactive visualizations.
 
-## 📱 Features
+## Features
 
-- Current weather conditions display
-- 7-day forecast with detailed metrics
-- Hourly weather breakdowns
-- Temperature, precipitation, UV index, and wind metrics
-- Historical data comparison
-- Clean, modern SwiftUI interface
+- Current weather conditions with detailed metrics
+- 7-day forecast with daily temperature ranges and conditions
+- Hourly forecast with detailed breakdowns
+- Weather data visualization with historical comparisons
+- Interactive weather cards for each forecast day
+- Location searching and current location detection
+- Custom location input support
+- Detailed day view with extended information
+- Weather alerts display
+- Unit conversion (°C/°F)
 - Responsive layout for all iOS devices
-- Native iOS widgets for home and lock screens
-- Dynamic Island integration
-- Support for both NWS and OpenWeather APIs
-- Unit conversion (Fahrenheit/Celsius)
-- Geolocation support
-- Offline mode with cached data
+- Support for both OpenWeather API and National Weather Service
 
-## 🏗️ Architecture
+## Architecture
 
-This application follows the MVVM (Model-View-ViewModel) architecture pattern:
+This project uses the MVVM (Model-View-ViewModel) architecture pattern:
 
-- **Models**: Define the data structures and business logic
-- **Views**: SwiftUI components that present data to the user
+- **Models**: Define data structures and business logic
 - **ViewModels**: Manage state, business logic, and data transformation
+- **Views**: SwiftUI components that present data to the user
 - **Services**: Handle API communication and data persistence
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 ios-weather-dashboard/
 ├── WeatherApp/
 │   ├── App/
-│   │   └── WeatherApp.swift       # Main app entry point
+│   │   └── WeatherApp.swift          # Main app entry point
 │   ├── Models/
-│   │   └── WeatherModels.swift    # Core data structures
+│   │   └── WeatherModels.swift       # Core data structures
 │   ├── ViewModels/
-│   │   └── WeatherViewModel.swift # State management and business logic
+│   │   └── WeatherViewModel.swift    # State management
 │   ├── Views/
-│   │   ├── ContentView.swift      # Main container view
+│   │   ├── ContentView.swift         # Main container view
 │   │   ├── CurrentWeatherView.swift  # Current conditions display
-│   │   ├── WeatherCardView.swift  # Individual forecast day card
-│   │   ├── WeatherChartView.swift # Data visualization
+│   │   ├── WeatherCardView.swift     # Daily forecast card
+│   │   ├── WeatherChartView.swift    # Data visualization
 │   │   └── LocationSelectorView.swift # Location picker
 │   ├── Services/
-│   │   └── WeatherAPIService.swift # API communication
-│   └── Utilities/
-│       └── WeatherUtils.swift     # Helper functions
-├── WeatherWidgetExtension/
-│   ├── WeatherWidget.swift        # Home screen widget
-│   └── WeatherLockScreenWidget.swift # Lock screen widget
-├── Screenshots/                   # App screenshots
-└── Documentation/                 # Additional documentation
+│   │   ├── WeatherService.swift      # Weather data service
+│   │   ├── WeatherAPIService.swift   # API integration
+│   │   └── MockWeatherService.swift  # Mock data for testing
+│   └── Utilities/                    # Helper functions
+├── WeatherAppTests/
+│   └── WeatherViewModelTests.swift   # Unit tests
+└── Documentation/                    # Additional documentation
 ```
 
-## 🚀 Getting Started
+## Implementation Details
+
+### Data Flow
+
+1. **User Input**: User selects location or uses current location
+2. **API Request**: `WeatherViewModel` requests data from `WeatherService`
+3. **Data Fetching**: `WeatherService` makes API calls to weather data provider
+4. **Data Processing**: Raw API data is converted to app's data models
+5. **UI Update**: `WeatherViewModel` updates published properties, triggering UI updates
+6. **View Rendering**: SwiftUI views react to data changes and update the UI
+
+### Key Components
+
+#### WeatherViewModel
+
+The central component that:
+- Manages application state (loading, error, success)
+- Processes and formats weather data for display
+- Handles user interactions (location selection, refreshing)
+- Maintains user preferences
+- Provides helper methods for data display
+
+#### WeatherService
+
+Responsible for:
+- Making API requests to weather data providers
+- Handling network errors
+- Converting API responses to app's data models
+- Providing consistent data regardless of the underlying API
+
+#### WeatherAPIService
+
+Handles specific API implementations:
+- `OpenWeatherMapAPI`: Integration with OpenWeather API
+- `NWSWeatherAPI`: Integration with National Weather Service API
+- Easily extensible for additional weather data providers
+
+#### View Components
+
+- `ContentView`: Main container with toolbar and navigation
+- `CurrentWeatherView`: Displays current conditions and details
+- `WeatherCardView`: Displays daily forecast summaries
+- `WeatherChartView`: Visualizes temperature trends with historical comparison
+- `LocationSelectorView`: Allows searching and selecting locations
+
+## Setup Instructions
 
 ### Prerequisites
 
 - Xcode 14.0+
 - iOS 15.0+ (iOS 16.0+ recommended for all features)
 - Swift 5.7+
-- Active Apple Developer account (for widget testing)
+- An API key from OpenWeather (for live data)
 
-### Installation
+### Configuration
 
-1. Clone this repository:
+1. Clone the repository:
 ```bash
-git clone https://github.com/needsupport/ios-weather-dashboard.git
+git clone https://github.com/YOUR_USERNAME/ios-weather-dashboard.git
 cd ios-weather-dashboard
 ```
 
@@ -77,97 +120,30 @@ cd ios-weather-dashboard
 open WeatherApp.xcodeproj
 ```
 
-3. Configure the API services in `WeatherAPIService.swift`:
-   - Set `baseURL` to your backend API endpoint
-   - Configure API keys if using OpenWeather
+3. Configure API keys:
+   - Navigate to `WeatherApp/Services/WeatherAPIService.swift`
+   - Replace `"YOUR_API_KEY"` with your actual OpenWeather API key
 
 4. Build and run the application on your device or simulator
 
-## ⚙️ Configuration
+### Using Mock Data
 
-### Weather API Services
+For development without an API key:
+1. Navigate to `WeatherApp/ViewModels/WeatherViewModel.swift`
+2. In the `init()` method, replace `self.weatherService = WeatherService()` with `self.weatherService = MockWeatherService()`
 
-The app supports two weather data providers:
+## Testing
 
-1. **National Weather Service (NWS) API**
-   - Free and open API from the US government
-   - No API key required
-   - Provides detailed forecasts for US locations only
+Run the included unit tests to verify:
+- Data fetching and error handling
+- Temperature unit conversion
+- Icon mapping
+- Location handling
 
-2. **OpenWeather API**
-   - Requires an API key (free tier available)
-   - Global coverage
-   - Configure in the app settings
-
-### Backend Proxy Server
-
-For production usage, a backend proxy server is recommended to:
-- Secure API keys
-- Implement rate limiting
-- Provide caching
-- Handle complex data transformation
-
-See the [Backend Configuration Guide](Documentation/BackendConfiguration.md) for setup instructions.
-
-## 📱 iOS-Specific Features
-
-### Widgets
-
-The app includes several widget types:
-- **Today Widget**: Shows current conditions and temperature
-- **Forecast Widget**: Displays 3-day forecast with high/low temperatures
-- **Alerts Widget**: Shows active weather alerts for the user's location
-
-### Dynamic Island
-
-On supported devices, the app integrates with Dynamic Island to show:
-- Active weather alerts
-- Precipitation starting/stopping notifications
-- Temperature changes
-- Severe weather approaching
-
-### Notifications
-
-The app can send push notifications for:
-- Severe weather alerts
-- Significant temperature changes
-- Precipitation forecasts
-- Daily forecast summaries
-
-## 📊 Data Visualization
-
-The app includes multiple visualization types:
-- Temperature curve charts
-- Precipitation probability bars
-- Wind direction and speed indicators
-- UV index forecasts
-- Historical temperature comparison
-
-## 🔄 Data Flow
-
-1. User selects or provides location
-2. App fetches weather data from configured API
-3. Data is processed and transformed for display
-4. UI updates with the latest weather information
-5. Data is cached for offline access
-
-## 🔒 Security & Privacy
-
-- All API keys are stored securely and never exposed in client code
-- Location data is only used for weather forecasting
-- No user data is collected or shared
-- All network requests use HTTPS
-
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+## License
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
