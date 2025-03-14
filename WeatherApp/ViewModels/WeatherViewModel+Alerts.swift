@@ -1,143 +1,98 @@
 import Foundation
 import Combine
 
-// This extension adds alert handling to the WeatherViewModel
 extension WeatherViewModel {
+    // MARK: - Alert Management
     
-    // Setup alert service
-    func setupAlertService() {
-        // Request notification permissions
-        weatherAlertService.requestNotificationPermissions { granted in
-            if !granted {
-                print("Notification permissions denied. Weather alerts won't be delivered.")
+    /// Process received alerts from the weather service
+    func processWeatherAlerts(_ alerts: [WeatherAlert]) {
+        // Store alerts in view model
+        self.alerts = alerts
+        
+        // Pass to alert service for notification handling
+        WeatherAlertService.shared.processAlerts(alerts, for: weatherData.location)
+    }
+    
+    /// Get the highest severity level from current alerts
+    var highestAlertSeverity: String? {
+        // Priority order: extreme > severe > moderate > minor
+        let severityLevels = ["extreme", "severe", "moderate", "minor"]
+        
+        for severity in severityLevels {
+            if alerts.contains(where: { $0.severity.lowercased() == severity }) {
+                return severity
             }
         }
         
-        // Setup background task for alert checking
-        if UserDefaults.standard.bool(forKey: "alertsEnabled") {
-            weatherAlertService.configureBackgroundRefresh()
-        }
+        return nil
     }
     
-    // Enable or disable alerts
-    func setAlertsEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "alertsEnabled")
-        
-        if enabled {
-            weatherAlertService.configureBackgroundRefresh()
-            checkForAlerts()
-        }
-    }
-    
-    // Check for active alerts
-    func checkForAlerts() {
-        guard let location = locationManager.currentLocation else {
-            if let lastCoordinates = UserDefaults.standard.string(forKey: "lastCoordinates") {
-                weatherAlertService.checkForAlerts(for: lastCoordinates)
-            }
-            return
-        }
-        
-        let coordinates = "\(location.coordinate.latitude),\(location.coordinate.longitude)"
-        weatherAlertService.checkForAlerts(for: coordinates)
-    }
-    
-    // Get active alerts for the current location
-    func loadActiveAlerts() {
-        if alerts.isEmpty {
-            if weatherData.location.isEmpty {
-                // No location set yet
-                return
-            }
-            
-            // Get coordinates for current location
-            let coordinateString: String
-            if let location = locationManager.currentLocation {
-                coordinateString = "\(location.coordinate.latitude),\(location.coordinate.longitude)"
-            } else if let lastCoordinates = UserDefaults.standard.string(forKey: "lastCoordinates") {
-                coordinateString = lastCoordinates
-            } else {
-                // No location available
-                return
-            }
-            
-            // Fetch alerts
-            weatherService.fetchWeather(for: coordinateString, unit: preferences.unit)
-                .receive(on: DispatchQueue.main)
-                .sink(receiveCompletion: { [weak self] completion in
-                    if case .failure(let error) = completion {
-                        self?.error = "Failed to load alerts: \(error.localizedDescription)"
-                    }
-                }, receiveValue: { [weak self] (_, alerts) in
-                    self?.alerts = alerts
-                })
-                .store(in: &cancellables)
-        }
-    }
-    
-    // Filter alerts by severity
-    func filteredAlerts(minSeverity: String = "minor") -> [WeatherAlert] {
-        let severityOrder = ["minor", "moderate", "severe", "extreme"]
-        
-        guard let minIndex = severityOrder.firstIndex(of: minSeverity.lowercased()) else {
-            return alerts
-        }
-        
-        return alerts.filter { alert in
-            if let severityIndex = severityOrder.firstIndex(of: alert.severity.lowercased()) {
-                return severityIndex >= minIndex
-            }
-            return true
-        }
-    }
-    
-    // Check if there are any severe alerts
+    /// Check if there are any active severe or extreme alerts
     var hasSevereAlerts: Bool {
-        return !filteredAlerts(minSeverity: "severe").isEmpty
-    }
-    
-    // Check if alerts are enabled
-    var alertsEnabled: Bool {
-        return UserDefaults.standard.bool(forKey: "alertsEnabled")
-    }
-    
-    // Get alert by ID
-    func getAlert(id: String) -> WeatherAlert? {
-        return alerts.first { $0.id == id }
-    }
-    
-    // Mark an alert as read
-    func markAlertAsRead(id: String) {
-        var readAlerts = UserDefaults.standard.stringArray(forKey: "readAlerts") ?? []
-        if !readAlerts.contains(id) {
-            readAlerts.append(id)
-            UserDefaults.standard.set(readAlerts, forKey: "readAlerts")
+        alerts.contains { 
+            ["severe", "extreme"].contains($0.severity.lowercased())
         }
     }
     
-    // Check if an alert has been read
-    func isAlertRead(id: String) -> Bool {
-        let readAlerts = UserDefaults.standard.stringArray(forKey: "readAlerts") ?? []
-        return readAlerts.contains(id)
+    /// Get the count of alerts by severity
+    func alertCount(for severity: String) -> Int {
+        alerts.filter { $0.severity.lowercased() == severity.lowercased() }.count
     }
     
-    // Clear all read alerts
-    func clearReadAlerts() {
-        UserDefaults.standard.removeObject(forKey: "readAlerts")
+    /// Get all alerts for a specific severity
+    func getAlerts(for severity: String) -> [WeatherAlert] {
+        alerts.filter { $0.severity.lowercased() == severity.lowercased() }
     }
     
-    // Handle notification response (for App Delegate)
-    func handleAlertNotification(alertID: String) {
-        // Find the alert by ID
-        if let alert = getAlert(id: alertID) {
-            // Mark it as read
-            markAlertAsRead(id: alertID)
-            
-            // Additional alert handling logic here
-            // e.g., navigate to alert details screen
-        } else {
-            // Alert not found, try to fetch alerts
-            loadActiveAlerts()
-        }
+    /// Simulate a test alert (for development and testing)
+    func simulateWeatherAlert() {
+        WeatherAlertService.shared.simulateAlert(for: weatherData.location)
+    }
+    
+    // MARK: - Testing Different Alert Scenarios
+    
+    func simulateExtremeTornado() {
+        let testAlert = WeatherAlert(
+            id: "tornado-\(Int(Date().timeIntervalSince1970))",
+            headline: "Tornado Warning",
+            description: "The National Weather Service has issued a TORNADO WARNING for your area. A severe thunderstorm capable of producing a tornado was detected near your location. TAKE COVER NOW! Move to an interior room on the lowest floor of a sturdy building. Avoid windows.",
+            severity: "extreme",
+            event: "Tornado Warning",
+            start: Date(),
+            end: Date().addingTimeInterval(1800) // 30 minutes
+        )
+        
+        // Process just this alert
+        processWeatherAlerts([testAlert])
+    }
+    
+    func simulateFlashFlood() {
+        let testAlert = WeatherAlert(
+            id: "flood-\(Int(Date().timeIntervalSince1970))",
+            headline: "Flash Flood Warning",
+            description: "The National Weather Service has issued a FLASH FLOOD WARNING for your area. Heavy rainfall is causing or expected to cause flash flooding in the warned area. If you are in a flood-prone area, move to higher ground immediately.",
+            severity: "severe",
+            event: "Flash Flood Warning",
+            start: Date(),
+            end: Date().addingTimeInterval(3600 * 6) // 6 hours
+        )
+        
+        // Process just this alert
+        processWeatherAlerts([testAlert])
+    }
+    
+    func simulateWinterStorm() {
+        let testAlert = WeatherAlert(
+            id: "winter-\(Int(Date().timeIntervalSince1970))",
+            headline: "Winter Storm Warning",
+            description: "The National Weather Service has issued a WINTER STORM WARNING for your area. Heavy snow and ice accumulations expected. Travel will be difficult to impossible. If you must travel, keep an extra flashlight, food, and water in your vehicle.",
+            severity: "severe",
+            event: "Winter Storm Warning",
+            start: Date(),
+            end: Date().addingTimeInterval(3600 * 24) // 24 hours
+        )
+        
+        // Process just this alert
+        processWeatherAlerts([testAlert])
     }
 }
