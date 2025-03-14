@@ -55,48 +55,78 @@ ios-weather-dashboard/
 
 ## Implementation Details
 
-### Data Flow
+### Code Design
 
-1. **User Input**: User selects location or uses current location
-2. **API Request**: `WeatherViewModel` requests data from `WeatherService`
-3. **Data Fetching**: `WeatherService` makes API calls to weather data provider
-4. **Data Processing**: Raw API data is converted to app's data models
-5. **UI Update**: `WeatherViewModel` updates published properties, triggering UI updates
-6. **View Rendering**: SwiftUI views react to data changes and update the UI
+The application follows a reactive programming paradigm using Combine:
 
-### Key Components
+1. **Data Flow**:
+   - ViewModels expose `@Published` properties that the Views observe
+   - Data changes trigger automatic UI updates through the observation system
+   - Services return `AnyPublisher` types for asynchronous operations
 
-#### WeatherViewModel
+2. **Dependency Injection**:
+   - Services are injected into ViewModels via constructors
+   - This allows for easier testing and swapping of implementations
 
-The central component that:
-- Manages application state (loading, error, success)
-- Processes and formats weather data for display
-- Handles user interactions (location selection, refreshing)
-- Maintains user preferences
-- Provides helper methods for data display
+3. **Protocol-Based Design**:
+   - Services implement protocols (e.g., `WeatherServiceProtocol`)
+   - Enables multiple implementations (production, mock) sharing common interfaces
 
-#### WeatherService
+4. **Error Handling**:
+   - Robust error system with dedicated error types and handling logic
+   - Errors are propagated up and displayed in user-friendly formats
 
-Responsible for:
-- Making API requests to weather data providers
-- Handling network errors
-- Converting API responses to app's data models
-- Providing consistent data regardless of the underlying API
+### Current Status
 
-#### WeatherAPIService
+#### Completed
+- Core MVVM architecture setup
+- Model definitions for weather data
+- Main view implementations (current weather, cards, chart, location)
+- Weather service with API integrations
+- Location services integration
+- Mock data service for development
+- Basic unit tests for ViewModel
+- Basic user preferences system
 
-Handles specific API implementations:
-- `OpenWeatherMapAPI`: Integration with OpenWeather API
-- `NWSWeatherAPI`: Integration with National Weather Service API
-- Easily extensible for additional weather data providers
+#### In Progress
+- Comprehensive error handling
+- Offline mode with data caching
+- Completing UI animations and transitions
+- Widget integration for home and lock screens
+- Expanding test coverage
 
-#### View Components
+#### To Do
+- Dynamic Island integration (iOS 16+)
+- Dark mode optimizations
+- Accessibility improvements
+- User preference persistence
+- Complete widget implementation
+- Advanced charts for historical data
+- Push notification handling for alerts
 
-- `ContentView`: Main container with toolbar and navigation
-- `CurrentWeatherView`: Displays current conditions and details
-- `WeatherCardView`: Displays daily forecast summaries
-- `WeatherChartView`: Visualizes temperature trends with historical comparison
-- `LocationSelectorView`: Allows searching and selecting locations
+## Roadmap
+
+### Near-term (1-3 months)
+- Complete offline mode with persistent storage
+- Add detailed historical data comparisons
+- Implement weather alert notifications
+- Complete widget system for all supported sizes
+- Enhance data visualization with more chart types
+
+### Mid-term (3-6 months)
+- Add precipitation radar maps
+- Integrate air quality data
+- Add pollen and allergen forecasts
+- Support for multiple saved locations
+- Theme customization options
+- Apple Watch companion app
+
+### Long-term (6+ months)
+- Weather camera integration from public sources
+- Trip planning feature with weather forecasts
+- Weather impact assessment for scheduled events
+- Integration with smart home platforms (HomeKit)
+- Machine learning for personalized forecasts
 
 ## Setup Instructions
 
@@ -140,9 +170,38 @@ Run the included unit tests to verify:
 - Icon mapping
 - Location handling
 
+## Performance Optimizations
+
+The app implements several performance optimizations:
+- Lazy loading of view components
+- Data caching for API responses
+- Conditional rendering to reduce view complexity
+- Efficient redrawing of chart components
+
+## Core Design Patterns
+
+- **Observer Pattern**: Implemented via SwiftUI's `@Published` and `@ObservedObject`
+- **Dependency Injection**: Services are injected into ViewModels
+- **Factory Pattern**: Used for creating different service implementations
+- **Adapter Pattern**: Used for adapting different API responses to our model
+- **Repository Pattern**: Implemented in the data layer for abstracting data sources
+
+## Known Issues
+
+- Chart visualization might not render correctly on smaller devices when many data points are shown
+- Weather alerts sometimes display brief loading delay on initial fetch
+- Location selection occasionally requires multiple attempts on first launch
+- Temperature conversion doesn't update immediately in some edge cases
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## License
 
