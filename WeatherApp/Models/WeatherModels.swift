@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Core Weather Data Models
 
 /// Main container for all weather data
-struct WeatherData {
+struct WeatherData: Codable {
     var daily: [DailyForecast] = []
     var hourly: [HourlyForecast] = []
     var location: String = ""
@@ -11,7 +11,7 @@ struct WeatherData {
 }
 
 /// Daily weather forecast information
-struct DailyForecast: Identifiable {
+struct DailyForecast: Identifiable, Codable {
     var id: String
     var day: String                 // Day name (e.g., "Monday")
     var fullDay: String             // Full day name
@@ -31,7 +31,7 @@ struct DailyForecast: Identifiable {
 }
 
 /// Hourly weather forecast information
-struct HourlyForecast: Identifiable {
+struct HourlyForecast: Identifiable, Codable {
     var id: String
     var time: String              // Time of forecast (formatted)
     var temperature: Double       // Temperature for this hour
@@ -43,18 +43,18 @@ struct HourlyForecast: Identifiable {
 }
 
 /// Precipitation information
-struct Precipitation {
+struct Precipitation: Codable {
     var chance: Double            // Percentage chance of precipitation
 }
 
 /// Wind information
-struct Wind {
+struct Wind: Codable {
     var speed: Double             // Wind speed value
     var direction: String          // Wind direction (N, S, E, W, etc.)
 }
 
 /// Metadata about the weather forecast
-struct WeatherMetadata {
+struct WeatherMetadata: Codable {
     var office: String            // Weather service office code
     var gridX: String             // Grid X coordinate (for NWS API)
     var gridY: String             // Grid Y coordinate (for NWS API)
@@ -63,7 +63,7 @@ struct WeatherMetadata {
 }
 
 /// Weather alert information
-struct WeatherAlert: Identifiable {
+struct WeatherAlert: Identifiable, Codable {
     var id: String
     var headline: String          // Alert headline
     var description: String       // Full alert description

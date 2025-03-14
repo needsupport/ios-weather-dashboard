@@ -9,6 +9,7 @@ struct LocationSelectorView: View {
     @State private var isSearching = false
     @State private var showingCustomLocation = false
     @Environment(\.dismiss) var dismiss
+    @ObservedObject private var locationManager = LocationManager.shared
     
     var body: some View {
         NavigationView {
@@ -77,7 +78,7 @@ struct LocationSelectorView: View {
                     List {
                         // Current location option
                         Button(action: {
-                            LocationManager.shared.requestLocationOnce { location in
+                            locationManager.requestLocationOnce { location in
                                 if let location = location {
                                     let coordinates = "\(location.coordinate.latitude),\(location.coordinate.longitude)"
                                     onLocationSelected("Current Location", coordinates)
@@ -93,6 +94,27 @@ struct LocationSelectorView: View {
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        // Saved locations section
+                        if !locationManager.savedLocations.isEmpty {
+                            Section(header: Text("Saved Locations")) {
+                                ForEach(locationManager.savedLocations) { location in
+                                    Button(action: {
+                                        onLocationSelected(location.name, location.coordinateString)
+                                        dismiss()
+                                    }) {
+                                        HStack {
+                                            Text(location.name)
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .onDelete(perform: deleteSavedLocation)
                             }
                         }
                         
@@ -152,6 +174,15 @@ struct LocationSelectorView: View {
                 .sorted { $0.key < $1.key }
         }
     }
+    
+    // Delete a saved location
+    private func deleteSavedLocation(at offsets: IndexSet) {
+        for index in offsets {
+            if index < locationManager.savedLocations.count {
+                locationManager.removeSavedLocation(id: locationManager.savedLocations[index].id)
+            }
+        }
+    }
 }
 
 // MARK: - Custom Location View
@@ -162,6 +193,8 @@ struct CustomLocationView: View {
     @State private var isShowingError = false
     @State private var errorMessage = ""
     @Environment(\.dismiss) var dismiss
+    @ObservedObject private var locationManager = LocationManager.shared
+    
     var onLocationAdded: (String, String) -> Void
     
     var body: some View {
@@ -229,58 +262,12 @@ struct CustomLocationView: View {
             return
         }
         
+        // Add to saved locations
+        locationManager.addSavedLocation(name: locationName, coordinates: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        
+        // Call the callback with coordinates
         let coordinates = "\(lat),\(lon)"
         onLocationAdded(locationName, coordinates)
-    }
-}
-
-// MARK: - Location Manager for getting current location
-class LocationManager: NSObject, CLLocationManagerDelegate {
-    static let shared = LocationManager()
-    
-    private let locationManager = CLLocationManager()
-    private var locationCallback: ((CLLocation?) -> Void)?
-    
-    private override init() {
-        super.init()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
-    }
-    
-    func requestLocationOnce(completion: @escaping (CLLocation?) -> Void) {
-        locationCallback = completion
-        
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.requestLocation()
-        case .denied, .restricted:
-            completion(nil) // Permission denied
-        @unknown default:
-            completion(nil)
-        }
-    }
-    
-    // MARK: - CLLocationManagerDelegate
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        locationCallback?(locations.first)
-        locationCallback = nil
-    }
-    
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location manager error: \(error.localizedDescription)")
-        locationCallback?(nil)
-        locationCallback = nil
-    }
-    
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
-            locationManager.requestLocation()
-        } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
-            locationCallback?(nil)
-            locationCallback = nil
-        }
     }
 }
 

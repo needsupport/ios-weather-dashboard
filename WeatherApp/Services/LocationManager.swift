@@ -2,118 +2,94 @@ import Foundation
 import CoreLocation
 import Combine
 
-class LocationManager: NSObject, ObservableObject {
-    // Published properties that update the UI
-    @Published var currentLocation: CLLocation?
-    @Published var locationStatus: CLAuthorizationStatus
-    @Published var lastKnownAddress: String?
-    @Published var isLoadingLocation: Bool = false
-    @Published var locationError: String?
+/// Saved location data structure
+struct SavedLocation: Identifiable, Codable {
+    var id: String
+    var name: String
+    var latitude: Double
+    var longitude: Double
     
-    // Publishers for location updates and errors
+    var coordinateString: String {
+        return "\(latitude),\(longitude)"
+    }
+    
+    var coordinate: CLLocationCoordinate2D {
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+/// Unified location manager class that provides location services for the app
+class LocationManager: NSObject, ObservableObject {
+    // Singleton instance
+    static let shared = LocationManager()
+    
+    // MARK: - Published Properties
+    @Published var currentLocation: CLLocation?
+    @Published var lastKnownAddress: String?
+    @Published var locationStatus: CLAuthorizationStatus = .notDetermined
+    @Published var savedLocations: [SavedLocation] = []
+    
+    // MARK: - Publishers
     let locationUpdatePublisher = PassthroughSubject<CLLocationCoordinate2D, Never>()
     let locationErrorPublisher = PassthroughSubject<Error, Never>()
     
-    // The CoreLocation manager
+    // MARK: - Private Properties
     private let locationManager = CLLocationManager()
-    
-    // Geocoder for reverse geocoding
     private let geocoder = CLGeocoder()
+    private var locationCallback: ((CLLocation?) -> Void)?
+    private let userDefaults = UserDefaults.standard
+    private let savedLocationsKey = "savedLocations"
     
-    // Saved locations
-    @Published var savedLocations: [SavedLocation] = []
-    
-    override init() {
-        self.locationStatus = .notDetermined
+    // MARK: - Initialization
+    private override init() {
         super.init()
-        
-        // Setup location manager
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyKilometer // Lower accuracy for weather app
-        locationManager.distanceFilter = 5000 // Only update when moved 5km
+        locationManager.desiredAccuracy = kCLLocationAccuracyKilometer
         
-        // Load saved locations
+        // Load saved locations from UserDefaults
         loadSavedLocations()
+        
+        // Set initial authorization status
+        locationStatus = locationManager.authorizationStatus
     }
     
-    // Request location permission
+    // MARK: - Public Methods
+    
+    /// Request location permission
     func requestLocationPermission() {
-        isLoadingLocation = true
         locationManager.requestWhenInUseAuthorization()
     }
     
-    // Start getting the current location
-    func startLocationUpdates() {
-        isLoadingLocation = true
-        locationError = nil
-        locationManager.startUpdatingLocation()
-    }
-    
-    // Get a single location update
+    /// Request current location update
     func requestLocation() {
-        isLoadingLocation = true
-        locationError = nil
         locationManager.requestLocation()
     }
     
-    // Stop location updates
-    func stopLocationUpdates() {
-        locationManager.stopUpdatingLocation()
-        isLoadingLocation = false
-    }
-    
-    // Convert location to address
-    func reverseGeocode(location: CLLocation, completion: @escaping (String?) -> Void) {
-        geocoder.reverseGeocodeLocation(location) { placemarks, error in
-            if let error = error {
-                print("Reverse geocoding error: \(error.localizedDescription)")
-                completion(nil)
-                return
-            }
-            
-            guard let placemark = placemarks?.first else {
-                completion(nil)
-                return
-            }
-            
-            var address = ""
-            
-            // Get locality (city)
-            if let locality = placemark.locality {
-                address = locality
-            }
-            
-            // Add administrative area (state/province)
-            if let administrativeArea = placemark.administrativeArea {
-                if !address.isEmpty {
-                    address += ", "
-                }
-                address += administrativeArea
-            }
-            
-            // If we couldn't get city or state, use the name
-            if address.isEmpty, let name = placemark.name {
-                address = name
-            }
-            
-            self.lastKnownAddress = address
-            completion(address)
+    /// Request location once with completion handler
+    func requestLocationOnce(completion: @escaping (CLLocation?) -> Void) {
+        locationCallback = completion
+        
+        switch locationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.requestLocation()
+        case .denied, .restricted:
+            completion(nil) // Permission denied
+        @unknown default:
+            completion(nil)
         }
     }
     
-    // Forward geocode - convert address to coordinates
+    /// Geocode an address to coordinates
     func geocode(address: String, completion: @escaping (CLLocationCoordinate2D?) -> Void) {
-        geocoder.geocodeAddressString(address) { placemarks, error in
-            if let error = error {
-                print("Forward geocoding error: \(error.localizedDescription)")
-                self.locationError = "Couldn't find location: \(error.localizedDescription)"
+        geocoder.geocodeAddressString(address) { (placemarks, error) in
+            guard error == nil, let placemark = placemarks?.first else {
                 completion(nil)
                 return
             }
             
-            guard let placemark = placemarks?.first,
-                  let location = placemark.location else {
-                self.locationError = "No location found for this address"
+            guard let location = placemark.location else {
                 completion(nil)
                 return
             }
@@ -122,12 +98,46 @@ class LocationManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Saved Locations
+    /// Reverse geocode coordinates to address
+    func reverseGeocode(coordinate: CLLocationCoordinate2D, completion: @escaping (String?) -> Void) {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        
+        geocoder.reverseGeocodeLocation(location) { (placemarks, error) in
+            guard error == nil, let placemark = placemarks?.first else {
+                completion(nil)
+                return
+            }
+            
+            // Format address from placemark
+            var addressString = ""
+            if let locality = placemark.locality {
+                addressString += locality
+            }
+            
+            if let administrativeArea = placemark.administrativeArea {
+                if !addressString.isEmpty {
+                    addressString += ", "
+                }
+                addressString += administrativeArea
+            }
+            
+            if addressString.isEmpty {
+                if let name = placemark.name {
+                    addressString = name
+                } else {
+                    addressString = "Unknown Location"
+                }
+            }
+            
+            completion(addressString)
+        }
+    }
     
-    // Add a new saved location
+    /// Add a location to saved locations
     func addSavedLocation(name: String, coordinates: CLLocationCoordinate2D) {
+        let id = UUID().uuidString
         let newLocation = SavedLocation(
-            id: UUID().uuidString,
+            id: id,
             name: name,
             latitude: coordinates.latitude,
             longitude: coordinates.longitude
@@ -137,118 +147,82 @@ class LocationManager: NSObject, ObservableObject {
         saveSavedLocations()
     }
     
-    // Remove a saved location
+    /// Remove a location from saved locations
     func removeSavedLocation(id: String) {
-        savedLocations.removeAll(where: { $0.id == id })
+        savedLocations.removeAll { $0.id == id }
         saveSavedLocations()
     }
     
-    // Save locations to UserDefaults
+    // MARK: - Private Methods
+    
+    /// Save locations to UserDefaults
     private func saveSavedLocations() {
-        if let encoded = try? JSONEncoder().encode(savedLocations) {
-            UserDefaults.standard.set(encoded, forKey: "savedLocations")
+        if let encodedData = try? JSONEncoder().encode(savedLocations) {
+            userDefaults.set(encodedData, forKey: savedLocationsKey)
         }
     }
     
-    // Load locations from UserDefaults
+    /// Load locations from UserDefaults
     private func loadSavedLocations() {
-        if let savedData = UserDefaults.standard.data(forKey: "savedLocations"),
-           let decodedLocations = try? JSONDecoder().decode([SavedLocation].self, from: savedData) {
-            savedLocations = decodedLocations
+        if let savedData = userDefaults.data(forKey: savedLocationsKey),
+           let locations = try? JSONDecoder().decode([SavedLocation].self, from: savedData) {
+            savedLocations = locations
         }
     }
 }
 
 // MARK: - CLLocationManagerDelegate
 extension LocationManager: CLLocationManagerDelegate {
-    // Authorization status changed
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        locationStatus = manager.authorizationStatus
-        
-        switch locationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            // Start getting location if authorized
-            locationManager.startUpdatingLocation()
-        case .denied, .restricted:
-            // Handle denied access
-            stopLocationUpdates()
-            locationError = "Location access denied. Please enable it in Settings."
-            locationErrorPublisher.send(NSError(
-                domain: "LocationDeniedError",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Location access denied"]
-            ))
-        case .notDetermined:
-            // Wait for user decision
-            break
-        @unknown default:
-            // Future-proof
-            break
-        }
-    }
-    
-    // Location updates received
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
+        guard let location = locations.first else { return }
         
         // Update current location
         currentLocation = location
-        isLoadingLocation = false
-        locationError = nil
         
-        // Notify subscribers
+        // Send update through the publisher
         locationUpdatePublisher.send(location.coordinate)
         
-        // Reverse geocode to get address
-        reverseGeocode(location: location) { _ in
-            // Address is stored in lastKnownAddress property
+        // Handle callback if set
+        if let callback = locationCallback {
+            callback(location)
+            locationCallback = nil
         }
         
-        // If we only requested a single location, stop updates
-        if manager.desiredAccuracy == kCLLocationAccuracyThreeKilometers {
-            stopLocationUpdates()
+        // Update address
+        reverseGeocode(coordinate: location.coordinate) { [weak self] address in
+            self?.lastKnownAddress = address
         }
     }
     
-    // Location manager error
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        // Handle error
-        isLoadingLocation = false
+        print("Location manager error: \(error.localizedDescription)")
         
-        if let clError = error as? CLError {
-            switch clError.code {
-            case .denied:
-                locationError = "Location access denied"
-            case .locationUnknown:
-                locationError = "Unable to determine location"
-            default:
-                locationError = "Location error: \(error.localizedDescription)"
-            }
-        } else {
-            locationError = "Error getting location: \(error.localizedDescription)"
-        }
-        
-        // Notify subscribers
+        // Send error through the publisher
         locationErrorPublisher.send(error)
-    }
-}
-
-// MARK: - Saved Location Model
-struct SavedLocation: Identifiable, Codable, Equatable {
-    let id: String
-    let name: String
-    let latitude: Double
-    let longitude: Double
-    
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        
+        // Handle callback if set
+        if let callback = locationCallback {
+            callback(nil)
+            locationCallback = nil
+        }
     }
     
-    var coordinateString: String {
-        "\(latitude),\(longitude)"
-    }
-    
-    static func == (lhs: SavedLocation, rhs: SavedLocation) -> Bool {
-        lhs.id == rhs.id
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        locationStatus = manager.authorizationStatus
+        
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.requestLocation()
+        case .denied, .restricted:
+            if let callback = locationCallback {
+                callback(nil)
+                locationCallback = nil
+            }
+        case .notDetermined:
+            // Wait for user to grant permission
+            break
+        @unknown default:
+            break
+        }
     }
 }

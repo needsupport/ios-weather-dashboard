@@ -9,6 +9,7 @@ enum WeatherError: Error, LocalizedError {
     case decodingError(Error)
     case apiError(String)
     case noData
+    case missingAPIKey
     
     var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ enum WeatherError: Error, LocalizedError {
             return "API error: \(message)"
         case .noData:
             return "No data received"
+        case .missingAPIKey:
+            return "Missing API key. Please add your OpenWeather API key in the settings or configuration."
         }
     }
 }
@@ -34,7 +37,27 @@ protocol WeatherServiceProtocol {
 // MARK: - Service Implementation
 class WeatherService: WeatherServiceProtocol {
     // MARK: - API Keys and Configuration
-    private let openWeatherApiKey = "YOUR_OPENWEATHER_API_KEY" // Replace with your actual API key
+    private var openWeatherApiKey: String {
+        // First try to get from environment variables or secure storage
+        if let apiKey = ProcessInfo.processInfo.environment["OPENWEATHER_API_KEY"] {
+            return apiKey
+        }
+        
+        // Then try to get from Settings bundle
+        if let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenWeatherAPIKey") as? String,
+           !apiKey.isEmpty && apiKey != "YOUR_OPENWEATHER_API_KEY" {
+            return apiKey
+        }
+        
+        // Finally, use directly embedded key (not recommended for production)
+        let embeddedKey = "YOUR_OPENWEATHER_API_KEY" // Replace with actual key for development
+        if embeddedKey != "YOUR_OPENWEATHER_API_KEY" {
+            return embeddedKey
+        }
+        
+        return ""
+    }
+    
     private let weatherKitEndpoint = "https://api.example.com/weatherkit" // Replace with actual endpoint
     
     // Demo data - used for preview and offline fallback
@@ -108,10 +131,20 @@ class WeatherService: WeatherServiceProtocol {
     
     // MARK: - Public Methods
     func fetchWeather(for coordinates: String, unit: WeatherViewModel.UserPreferences.TemperatureUnit) -> AnyPublisher<(WeatherData, [WeatherAlert]), Error> {
-        // For testing purposes, you can use the demo data instead of making an actual API call
-        // Comment out the return statement below to implement the actual API call
+        // Check if API key is available
+        if openWeatherApiKey.isEmpty {
+            #if DEBUG
+            // Use demo data in DEBUG mode if no API key is available
+            return Just((demoData, getDemoAlerts()))
+                .delay(for: .seconds(1.5), scheduler: RunLoop.main) // Simulate network delay
+                .setFailureType(to: Error.self)
+                .eraseToAnyPublisher()
+            #else
+            return Fail(error: WeatherError.missingAPIKey).eraseToAnyPublisher()
+            #endif
+        }
         
-        // Uncomment for testing with demo data
+        // For debugging, you can uncomment to use demo data
         // return Just((demoData, getDemoAlerts()))
         //     .delay(for: .seconds(1.5), scheduler: RunLoop.main) // Simulate network delay
         //     .setFailureType(to: Error.self)
