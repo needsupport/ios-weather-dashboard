@@ -31,7 +31,7 @@ extension WeatherViewModel {
         fetchFreshWeatherData(for: coordinates, locationName: locationName)
     }
     
-    // Fetch fresh data when cache is missing or expired
+    // Fetch fresh data from the API
     private func fetchFreshWeatherData(for coordinates: String, locationName: String) {
         weatherService.fetchWeather(for: coordinates, unit: preferences.unit)
             .receive(on: DispatchQueue.main)
@@ -43,112 +43,114 @@ extension WeatherViewModel {
                 if case .failure(let error) = completion {
                     self.error = error.localizedDescription
                     
-                    // Try to load stale cache as fallback on error
-                    self.tryLoadStaleCacheOnError(for: locationName)
+                    // Try to use cached data even if expired as a fallback
+                    self.tryLoadExpiredCache(for: locationName)
                 }
             }, receiveValue: { [weak self] (weatherData, alerts) in
                 guard let self = self else { return }
+                
+                // Update the view model data
                 self.weatherData = weatherData
                 self.alerts = alerts
                 
-                // Update location name if needed
-                if self.weatherData.location.isEmpty {
+                // If we have a location name from reverse geocoding, use it
+                if !locationName.contains("Unknown") {
                     self.weatherData.location = locationName
                 }
                 
-                // Cache the data
+                // Cache the data for future use
                 self.weatherCacheService.save(weatherData: weatherData, for: locationName)
             })
             .store(in: &cancellables)
     }
     
-    // Fetch only hourly data if daily data is still valid
+    // Fetch only hourly data if the daily data is still valid
     private func fetchFreshHourlyData(for coordinates: String, locationName: String) {
-        // This is a simplified approach - in a real app, you might want to have a separate API endpoint
-        // that only returns hourly data to save bandwidth
         weatherService.fetchWeather(for: coordinates, unit: preferences.unit)
             .receive(on: DispatchQueue.main)
             .sink(receiveCompletion: { [weak self] completion in
                 guard let self = self else { return }
                 
                 if case .failure(let error) = completion {
-                    print("Failed to refresh hourly data: \(error.localizedDescription)")
-                    // Not updating error state since we already have valid daily data
+                    // Just log the error - we already have daily data
+                    print("Error fetching hourly data: \(error.localizedDescription)")
                 }
             }, receiveValue: { [weak self] (weatherData, _) in
                 guard let self = self else { return }
                 
-                // Only update the hourly data, keep daily data from cache
+                // Only update hourly data, keeping our cached daily data
                 self.weatherData.hourly = weatherData.hourly
                 
-                // Update the cache with the new hourly data
-                var updatedWeatherData = self.weatherData
-                updatedWeatherData.hourly = weatherData.hourly
-                self.weatherCacheService.save(weatherData: updatedWeatherData, for: locationName)
+                // Update the cache with the new combined data
+                self.weatherCacheService.save(weatherData: self.weatherData, for: locationName)
             })
             .store(in: &cancellables)
     }
     
-    // Try to load stale cache as fallback when API request fails
-    private func tryLoadStaleCacheOnError(for locationName: String) {
-        // This method would try to load cached data even if expired
-        // In a real app, this would need additional cache handling logic
-        
-        // For now, we'll simulate this by checking UserDefaults directly
-        // A more robust implementation would have a dedicated method in WeatherCacheService
-        let cacheKey = "weatherCache_\(locationName.replacingOccurrences(of: " ", with: "_").lowercased())"
-        
-        if let encodedData = UserDefaults.standard.data(forKey: cacheKey),
-           let cache = try? JSONDecoder().decode(WeatherCache.self, from: encodedData) {
-            self.weatherData = cache.weatherData
-            self.error = "Using cached data from \(formatDate(cache.dailyExpiration)). Couldn't refresh."
-        }
+    // Try to load expired cache data as a fallback when network fails
+    private func tryLoadExpiredCache(for locationName: String) {
+        // This would need a separate method in the cache service to bypass expiration checks
+        // For now, we'll just show the error
     }
     
-    // Get location name from coordinates
-    private func getLocationNameFromCoordinates(_ coordinates: String) -> String? {
-        // Check if this is a saved location
-        let components = coordinates.split(separator: ",")
-        if components.count == 2,
-           let lat = Double(components[0]),
-           let lon = Double(components[1]) {
-            
-            let savedLocation = locationManager.savedLocations.first { location in
-                abs(location.latitude - lat) < 0.01 && abs(location.longitude - lon) < 0.01
+    // Refresh data, potentially using cache for fast display while updating in background
+    func refreshWeatherWithCache() {
+        guard !isRefreshing else { return }
+        
+        isRefreshing = true
+        
+        if let lastCoordinates = UserDefaults.standard.string(forKey: "lastCoordinates") {
+            // First show cached data immediately if available
+            let locationName = UserDefaults.standard.string(forKey: "lastLocationName") ?? "Unknown Location"
+            if let cachedData = weatherCacheService.loadCachedData(for: locationName) {
+                self.weatherData = cachedData
             }
             
-            if let location = savedLocation {
-                return location.name
-            }
+            // Then fetch fresh data
+            fetchFreshWeatherData(for: lastCoordinates, locationName: locationName)
+        } else {
+            // No last coordinates available, request location
+            requestLocation()
+            isRefreshing = false
         }
-        
-        // Check if we have a cached name
-        if let lastCoords = UserDefaults.standard.string(forKey: "lastCoordinates"),
-           lastCoords == coordinates,
-           let lastName = UserDefaults.standard.string(forKey: "lastLocationName") {
-            return lastName
-        }
-        
-        return nil
     }
     
-    // Format date for display
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-    
-    // Clear the cache for the current location
+    // Clear cache for current location
     func clearCache() {
-        if let locationName = weatherData.location {
+        if let locationName = weatherData.location, !locationName.isEmpty {
             weatherCacheService.clearCache(for: locationName)
         }
     }
     
-    // Clear all cached data
-    func clearAllCaches() {
-        weatherCacheService.clearCache()
+    // Get location name from coordinates string
+    private func getLocationNameFromCoordinates(_ coordinates: String) -> String? {
+        // Check if we have a stored name for these coordinates
+        let savedLocations = locationManager.savedLocations
+        let coordinateParts = coordinates.split(separator: ",")
+        
+        if coordinateParts.count == 2,
+           let lat = Double(coordinateParts[0]),
+           let lon = Double(coordinateParts[1]) {
+            
+            // Check saved locations
+            for location in savedLocations {
+                // Use approximate matching with small delta
+                let latDelta = abs(location.latitude - lat)
+                let lonDelta = abs(location.longitude - lon)
+                
+                if latDelta < 0.01 && lonDelta < 0.01 {
+                    return location.name
+                }
+            }
+            
+            // Check for last known location
+            if let lastCoordinates = UserDefaults.standard.string(forKey: "lastCoordinates"),
+               let lastLocationName = UserDefaults.standard.string(forKey: "lastLocationName"),
+               lastCoordinates == coordinates {
+                return lastLocationName
+            }
+        }
+        
+        return nil
     }
 }
