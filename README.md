@@ -15,7 +15,7 @@ A comprehensive native iOS weather application built with SwiftUI that provides 
 - Weather alerts display
 - Unit conversion (°C/°F) with regional defaults
 - Responsive layout for all iOS devices
-- Support for both OpenWeather API and National Weather Service
+- Support for both National Weather Service API (US) and OpenWeather API (international)
 - Offline mode with CoreData-based caching
 - WidgetKit integration for home and lock screens
 
@@ -154,7 +154,7 @@ The project is being implemented in phases as outlined in the [Implementation Ro
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/ios-weather-dashboard.git
+git clone https://github.com/needsupport/ios-weather-dashboard.git
 cd ios-weather-dashboard
 ```
 
@@ -164,10 +164,21 @@ open WeatherApp.xcodeproj
 ```
 
 3. Configure API keys:
-   - Navigate to `WeatherApp/Services/WeatherAPIService.swift`
-   - Replace `"YOUR_API_KEY"` with your actual OpenWeather API key
+   - Add your OpenWeather API key to the project
+   - You can set it using the ApiKeyManager in the app:
+   ```swift
+   ApiKeyManager.shared.setOpenWeatherMapApiKey("YOUR_API_KEY")
+   ```
+   - Or add it in the ApiKeyManager initialization in WeatherAPIService.swift for development
 
-4. Build and run the application on your device or simulator
+4. Set up App Groups for Widget Support:
+   - In Xcode, select the app target and go to "Signing & Capabilities"
+   - Add the "App Groups" capability
+   - Create a group identifier (e.g., "group.com.yourcompany.ios-weather-dashboard")
+   - Do the same for the Widget Extension target
+   - Update the group name in WeatherWidgetDataProvider if needed
+
+5. Build and run the application on your device or simulator
 
 ### Using Mock Data
 
