@@ -1,201 +1,176 @@
 import Foundation
 import UserNotifications
+import ActivityKit
 import Combine
 
-enum AlertSeverity: String, Codable {
-    case minor
-    case moderate
-    case severe
-    case extreme
-    
-    var notificationSound: UNNotificationSound {
-        switch self {
-        case .minor, .moderate:
-            return .default
-        case .severe, .extreme:
-            return .defaultCritical
-        }
-    }
-    
-    var notificationCategory: String {
-        switch self {
-        case .minor:
-            return "ALERT_MINOR"
-        case .moderate:
-            return "ALERT_MODERATE"
-        case .severe:
-            return "ALERT_SEVERE"
-        case .extreme:
-            return "ALERT_EXTREME"
-        }
-    }
-}
-
 class WeatherAlertService {
-    private let weatherService: WeatherServiceProtocol
+    static let shared = WeatherAlertService()
+    
+    private var currentAlerts: [WeatherAlert] = []
+    private var alertActivities: [String: ActivityIdentifier] = [:]
     private var cancellables = Set<AnyCancellable>()
-    private let notificationCenter = UNUserNotificationCenter.current()
     
-    // How often to check for alerts in the background
-    private let alertPollingInterval: TimeInterval = 1800 // 30 minutes
-    
-    init(weatherService: WeatherServiceProtocol) {
-        self.weatherService = weatherService
-        setupNotificationCategories()
+    init() {
+        setupNotifications()
     }
     
-    // Setup notification actions and categories
-    private func setupNotificationCategories() {
-        // View action - opens the app to view the alert
-        let viewAction = UNNotificationAction(
-            identifier: "VIEW_ACTION",
-            title: "View Details",
-            options: .foreground
-        )
-        
-        // Dismiss action
-        let dismissAction = UNNotificationAction(
-            identifier: "DISMISS_ACTION",
-            title: "Dismiss",
-            options: .destructive
-        )
-        
-        // Create categories for different alert severities
-        let minorCategory = UNNotificationCategory(
-            identifier: AlertSeverity.minor.notificationCategory,
-            actions: [viewAction, dismissAction],
-            intentIdentifiers: [],
-            options: []
-        )
-        
-        let moderateCategory = UNNotificationCategory(
-            identifier: AlertSeverity.moderate.notificationCategory,
-            actions: [viewAction, dismissAction],
-            intentIdentifiers: [],
-            options: []
-        )
-        
-        let severeCategory = UNNotificationCategory(
-            identifier: AlertSeverity.severe.notificationCategory,
-            actions: [viewAction, dismissAction],
-            intentIdentifiers: [],
-            options: [.hiddenPreviewsShowTitle]
-        )
-        
-        let extremeCategory = UNNotificationCategory(
-            identifier: AlertSeverity.extreme.notificationCategory,
-            actions: [viewAction, dismissAction],
-            intentIdentifiers: [],
-            options: [.hiddenPreviewsShowTitle, .criticalAlert]
-        )
-        
-        // Register categories
-        notificationCenter.setNotificationCategories([
-            minorCategory,
-            moderateCategory,
-            severeCategory,
-            extremeCategory
-        ])
-    }
+    // MARK: - UNUserNotificationCenter Setup
     
-    // Request notification permissions
-    func requestNotificationPermissions(completion: @escaping (Bool) -> Void) {
-        notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error = error {
-                print("Error requesting notification permissions: \(error.localizedDescription)")
-                completion(false)
-                return
+    func setupNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("Notification authorization granted")
+            } else if let error = error {
+                print("Notification authorization denied: \(error.localizedDescription)")
             }
-            completion(granted)
         }
     }
     
-    // Check for alerts for a given location
-    func checkForAlerts(for coordinates: String) {
-        weatherService.fetchWeather(for: coordinates, unit: .celsius)
-            .receive(on: DispatchQueue.main)
-            .sink(receiveCompletion: { completion in
-                if case .failure(let error) = completion {
-                    print("Error fetching weather alerts: \(error.localizedDescription)")
-                }
-            }, receiveValue: { (_, alerts) in
-                // Process and schedule notifications for new alerts
-                self.processAlerts(alerts, for: coordinates)
-            })
-            .store(in: &cancellables)
-    }
+    // MARK: - Alert Management
     
-    // Process alerts and schedule notifications for new ones
-    private func processAlerts(_ alerts: [WeatherAlert], for location: String) {
-        // Get previously processed alert IDs
-        let processedAlertIDs = UserDefaults.standard.stringArray(forKey: "processedAlertIDs") ?? []
-        var newProcessedAlertIDs = processedAlertIDs
+    func processAlerts(_ alerts: [WeatherAlert], for location: String) {
+        // Filter new alerts - ones that weren't in the previous set
+        let existingAlertIds = currentAlerts.map { $0.id }
+        let newAlerts = alerts.filter { !existingAlertIds.contains($0.id) }
         
-        for alert in alerts {
-            // Skip if this alert has already been processed
-            if processedAlertIDs.contains(alert.id) {
-                continue
+        // Handle new alerts
+        for alert in newAlerts {
+            // Schedule local notification
+            scheduleAlertNotification(alert, for: location)
+            
+            // Start Live Activity if supported
+            if #available(iOS 16.1, *) {
+                startAlertActivity(alert, for: location)
             }
-            
-            // Schedule notification for new alert
-            scheduleNotification(for: alert, location: location)
-            
-            // Add to processed list
-            newProcessedAlertIDs.append(alert.id)
         }
         
-        // Update processed alert IDs in UserDefaults
-        UserDefaults.standard.set(newProcessedAlertIDs, forKey: "processedAlertIDs")
+        // Find alerts that have ended
+        let newAlertIds = alerts.map { $0.id }
+        let endedAlerts = currentAlerts.filter { !newAlertIds.contains($0.id) }
+        
+        // End activities for alerts that are no longer active
+        for alert in endedAlerts {
+            if #available(iOS 16.1, *) {
+                endAlertActivity(alert.id)
+            }
+        }
+        
+        // Update current alerts
+        currentAlerts = alerts
     }
     
-    // Schedule a notification for a weather alert
-    private func scheduleNotification(for alert: WeatherAlert, location: String) {
+    // MARK: - Local Notifications
+    
+    private func scheduleAlertNotification(_ alert: WeatherAlert, for location: String) {
         let content = UNMutableNotificationContent()
         content.title = "\(alert.event) for \(location)"
+        content.subtitle = alert.headline
         content.body = alert.description
-        content.sound = getSeverity(from: alert.severity).notificationSound
-        content.categoryIdentifier = getSeverity(from: alert.severity).notificationCategory
+        content.sound = .default
         
-        // Add alert info to user info
-        content.userInfo = [
-            "alertID": alert.id,
-            "location": location,
-            "event": alert.event,
-            "severity": alert.severity
-        ]
+        // Set category for alert severity
+        content.categoryIdentifier = "WEATHER_ALERT_\(alert.severity.uppercased())"
         
-        // Create trigger for immediate delivery
+        // Set notification timing
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         
         // Create request
         let request = UNNotificationRequest(
-            identifier: "weather_alert_\(alert.id)",
+            identifier: alert.id,
             content: content,
             trigger: trigger
         )
         
-        // Schedule notification
-        notificationCenter.add(request) { error in
+        // Add to notification center
+        UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
                 print("Error scheduling notification: \(error.localizedDescription)")
             }
         }
     }
     
-    // Convert string severity to enum
-    private func getSeverity(from severityString: String) -> AlertSeverity {
-        return AlertSeverity(rawValue: severityString.lowercased()) ?? .moderate
+    // MARK: - Dynamic Island Live Activities
+    
+    @available(iOS 16.1, *)
+    private func startAlertActivity(_ alert: WeatherAlert, for location: String) {
+        // Only start activity for severe or extreme alerts
+        guard ["severe", "extreme"].contains(alert.severity.lowercased()) else { return }
+        
+        let alertAttributes = WeatherAlertAttributes(
+            alertId: alert.id,
+            location: location,
+            severity: alert.severity
+        )
+        
+        let alertContent = WeatherAlertAttributes.ContentState(
+            eventType: alert.event,
+            headline: alert.headline,
+            startTime: alert.start,
+            endTime: alert.end ?? Date().addingTimeInterval(86400) // Default to 24 hours if no end time
+        )
+        
+        do {
+            let activity = try Activity.request(
+                attributes: alertAttributes,
+                contentState: alertContent,
+                pushType: nil
+            )
+            
+            // Store activity ID for later reference
+            alertActivities[alert.id] = activity.id
+            
+            print("Started live activity for alert: \(alert.id)")
+        } catch {
+            print("Error starting live activity: \(error.localizedDescription)")
+        }
     }
     
-    // Configure background refresh task
-    func configureBackgroundRefresh() {
-        // Setup background task - this would normally be done in AppDelegate or SceneDelegate
-        let backgroundTaskIdentifier = "com.weatherapp.refreshAlerts"
+    @available(iOS 16.1, *)
+    private func endAlertActivity(_ alertId: String) {
+        guard let activityId = alertActivities[alertId],
+              let activity = Activity<WeatherAlertAttributes>.activities.first(where: { $0.id == activityId }) else {
+            return
+        }
         
-        #if os(iOS)
-        // This isn't really possible to implement fully in a code snippet
-        // as it requires app configuration and AppDelegate/SceneDelegate setup
-        print("Background refresh task would be configured here")
-        #endif
+        // End the activity
+        Task {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            alertActivities.removeValue(forKey: alertId)
+            print("Ended live activity for alert: \(alertId)")
+        }
     }
+    
+    // MARK: - Testing Functions
+    
+    func simulateAlert(for location: String) {
+        let testAlert = WeatherAlert(
+            id: "test-alert-\(Int(Date().timeIntervalSince1970))",
+            headline: "Test Severe Thunderstorm Warning",
+            description: "The National Weather Service has issued a Severe Thunderstorm Warning for your area. Expect heavy rain, lightning, and possible hail. Take shelter immediately.",
+            severity: "severe",
+            event: "Severe Thunderstorm Warning",
+            start: Date(),
+            end: Date().addingTimeInterval(3600) // 1 hour from now
+        )
+        
+        // Process just this alert
+        processAlerts([testAlert], for: location)
+    }
+}
+
+// MARK: - Live Activity Attributes
+
+@available(iOS 16.1, *)
+struct WeatherAlertAttributes: ActivityAttributes {
+    public struct ContentState: Codable, Hashable {
+        var eventType: String
+        var headline: String
+        var startTime: Date
+        var endTime: Date
+    }
+    
+    var alertId: String
+    var location: String
+    var severity: String
 }
