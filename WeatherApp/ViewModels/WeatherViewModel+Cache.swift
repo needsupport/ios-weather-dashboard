@@ -4,6 +4,11 @@ import Combine
 // This extension adds caching support to the WeatherViewModel
 extension WeatherViewModel {
     
+    // Private cache service property
+    lazy var weatherCacheService: WeatherCacheService = {
+        return WeatherCacheService()
+    }()
+    
     // Check cache before making an API call
     func fetchWeatherDataWithCache(for coordinates: String) {
         isLoading = true
@@ -96,10 +101,42 @@ extension WeatherViewModel {
     
     // Get expired cache as a last resort
     private func getExpiredCache(for locationName: String) -> WeatherData? {
-        // This would require additional implementation in WeatherCacheService
-        // to retrieve expired cache data as a fallback
-        // For now, just a placeholder
-        return nil
+        let cacheKey = "weatherCache_\(locationName.replacingOccurrences(of: " ", with: "_").lowercased())"
+        
+        guard let encodedData = UserDefaults.standard.data(forKey: cacheKey) else {
+            return nil
+        }
+        
+        // Try to decode the cache regardless of expiration
+        do {
+            let cache = try JSONDecoder().decode(WeatherCache.self, from: encodedData)
+            // Update the metadata to show it's using expired data
+            var weatherData = cache.weatherData
+            var metadataInfo = "Expired cache from "
+            if let updated = weatherData.metadata?.updated {
+                metadataInfo += updated
+            } else {
+                metadataInfo += "unknown time"
+            }
+            
+            // Set or update metadata
+            if weatherData.metadata == nil {
+                weatherData.metadata = WeatherMetadata(
+                    office: "Unknown",
+                    gridX: "0",
+                    gridY: "0",
+                    timezone: TimeZone.current.identifier,
+                    updated: metadataInfo
+                )
+            } else {
+                weatherData.metadata?.updated = metadataInfo
+            }
+            
+            return weatherData
+        } catch {
+            print("Error decoding expired cache: \(error.localizedDescription)")
+            return nil
+        }
     }
     
     // Format cache date for display
@@ -162,5 +199,15 @@ extension WeatherViewModel {
             // No coordinates, request location
             requestCurrentLocation()
         }
+    }
+    
+    // Request current location from location manager
+    private func requestCurrentLocation() {
+        // Reset any previous errors
+        error = nil
+        isLoading = true
+        
+        // Request location update from the location manager
+        locationManager.requestLocation()
     }
 }
