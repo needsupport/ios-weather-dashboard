@@ -1,124 +1,68 @@
+import Foundation
 import WidgetKit
-import SwiftUI
-import CoreData
 
-/// Provides data for weather widgets with CoreData integration
-class WidgetDataProvider {
-    static let shared = WidgetDataProvider()
+// MARK: - Widget Data Provider
+class WeatherWidgetDataProvider {
+    static let shared = WeatherWidgetDataProvider()
     
-    private let coreDataManager = CoreDataManager.shared
+    private let userDefaults: UserDefaults?
+    private let weatherDataKey = "weatherWidgetData"
     
-    private init() {}
-    
-    /// Get weather data for widgets
-    /// - Parameter completion: Callback with widget data or nil if not available
-    func getWidgetData(completion: @escaping (WeatherWidgetData?) -> Void) {
-        // 1. Load saved locations from CoreData
-        coreDataManager.fetchAllLocations()
-            .sink(
-                receiveCompletion: { completionStatus in
-                    if case .failure(let error) = completionStatus {
-                        print("Error fetching locations for widget: \(error.localizedDescription)")
-                        completion(nil)
-                    }
-                },
-                receiveValue: { [weak self] locations in
-                    guard let self = self else { return }
-                    
-                    // 2. Determine which location to use (primary/favorite/first)
-                    let locationToUse = self.determineWidgetLocation(from: locations)
-                    
-                    if let locationId = locationToUse?.id {
-                        // 3. Get weather data for selected location
-                        self.fetchWidgetDataForLocation(locationId: locationId, completion: completion)
-                    } else {
-                        // No valid location
-                        completion(nil)
-                    }
-                }
-            )
+    private init() {
+        // Initialize with app group container
+        userDefaults = UserDefaults(suiteName: "group.com.weatherapp.widget")
     }
     
-    /// Determine which location to use for widget
-    /// - Parameter locations: Available locations
-    /// - Returns: Selected location or nil if no locations
-    private func determineWidgetLocation(from locations: [LocationInfo]) -> LocationInfo? {
-        // Priority:
-        // 1. Favorite location
-        // 2. Most recently updated
-        // 3. First in list
-        
-        if let favoriteLocation = locations.first(where: { $0.isFavorite }) {
-            return favoriteLocation
-        } else if let mostRecentLocation = locations.max(by: { $0.lastUpdated < $1.lastUpdated }) {
-            return mostRecentLocation
-        } else {
-            return locations.first
+    func saveWidgetData(_ data: WeatherWidgetData) {
+        guard let encoded = try? JSONEncoder().encode(data) else {
+            print("Failed to encode widget data")
+            return
         }
+        
+        userDefaults?.set(encoded, forKey: weatherDataKey)
+        WidgetCenter.shared.reloadAllTimelines()
     }
     
-    /// Fetch weather data for a specific location
-    /// - Parameters:
-    ///   - locationId: ID of the location to fetch data for
-    ///   - completion: Callback with widget data or nil if not available
-    private func fetchWidgetDataForLocation(locationId: String, completion: @escaping (WeatherWidgetData?) -> Void) {
-        coreDataManager.fetchWeatherData(for: locationId)
-            .sink(
-                receiveCompletion: { completionStatus in
-                    if case .failure(let error) = completionStatus {
-                        print("Error fetching weather data for widget: \(error.localizedDescription)")
-                        completion(nil)
-                    }
-                },
-                receiveValue: { weatherData in
-                    guard let weatherData = weatherData else {
-                        completion(nil)
-                        return
-                    }
-                    
-                    // Convert to widget data format
-                    let widgetData = self.convertToWidgetData(weatherData)
-                    completion(widgetData)
-                }
-            )
+    func loadWidgetData() -> WeatherWidgetData? {
+        guard let data = userDefaults?.data(forKey: weatherDataKey),
+              let widgetData = try? JSONDecoder().decode(WeatherWidgetData.self, from: data) else {
+            return createPlaceholderData()
+        }
+        
+        return widgetData
     }
     
-    /// Convert app weather data to widget data
-    /// - Parameter weatherData: App weather data model
-    /// - Returns: Widget data model
-    private func convertToWidgetData(_ weatherData: WeatherData) -> WeatherWidgetData {
-        // Extract current conditions from first daily forecast
-        let currentForecast = weatherData.daily.first
-        let dailyForecasts = weatherData.daily.prefix(7).map { forecast in
+    // Create placeholder data for widget preview and initial state
+    func createPlaceholderData() -> WeatherWidgetData {
+        let dailyForecasts = (0..<7).map { i in
             return DailyWidgetForecast(
-                id: forecast.id,
-                day: forecast.day,
-                highTemperature: forecast.tempHigh,
-                lowTemperature: forecast.tempLow,
-                condition: forecast.shortForecast,
-                iconName: forecast.icon,
-                precipitationChance: forecast.precipitation.chance
+                id: "day-\(i)",
+                day: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7],
+                highTemperature: Double(20 + i),
+                lowTemperature: Double(10 + i),
+                condition: ["Sunny", "Partly Cloudy", "Cloudy", "Rainy"][i % 4],
+                iconName: ["sun", "cloud.sun", "cloud", "cloud.rain"][i % 4],
+                precipitationChance: Double([0, 10, 30, 60][i % 4])
             )
         }
         
-        // Create widget data model
         return WeatherWidgetData(
-            location: weatherData.location,
-            temperature: currentForecast?.tempHigh ?? 0,
-            temperatureUnit: "°F",  // Get from user preferences
-            condition: currentForecast?.shortForecast ?? "Unknown",
-            iconName: currentForecast?.icon ?? "cloud",
-            highTemperature: currentForecast?.tempHigh ?? 0,
-            lowTemperature: currentForecast?.tempLow ?? 0,
-            precipitationChance: currentForecast?.precipitation.chance ?? 0,
-            dailyForecasts: Array(dailyForecasts),
+            location: "San Francisco, CA",
+            temperature: 22.0,
+            temperatureUnit: "C",
+            condition: "Partly Cloudy",
+            iconName: "cloud.sun",
+            highTemperature: 24.0,
+            lowTemperature: 16.0,
+            precipitationChance: 20.0,
+            dailyForecasts: dailyForecasts,
             lastUpdated: Date()
         )
     }
 }
 
-/// Data model for widgets
-struct WeatherWidgetData {
+// MARK: - Widget Data Models
+struct WeatherWidgetData: Codable {
     let location: String
     let temperature: Double
     let temperatureUnit: String
@@ -131,7 +75,7 @@ struct WeatherWidgetData {
     let lastUpdated: Date
     
     var temperatureString: String {
-        return "\(Int(round(temperature)))\(temperatureUnit)"
+        return "\(Int(round(temperature)))°\(temperatureUnit)"
     }
     
     var highTempString: String {
@@ -143,8 +87,7 @@ struct WeatherWidgetData {
     }
 }
 
-/// Data model for daily forecasts in widgets
-struct DailyWidgetForecast: Identifiable {
+struct DailyWidgetForecast: Codable, Identifiable {
     var id: String
     let day: String
     let highTemperature: Double
@@ -160,4 +103,61 @@ struct DailyWidgetForecast: Identifiable {
     var lowTempString: String {
         return "\(Int(round(lowTemperature)))°"
     }
+}
+
+// MARK: - Helper Functions
+extension WeatherWidgetDataProvider {
+    // Get system icon name from our icon name
+    func getSystemIcon(from weatherCode: String) -> String {
+        switch weatherCode {
+        case "clear-day": return "sun.max.fill"
+        case "clear-night": return "moon.stars.fill"
+        case "partly-cloudy-day": return "cloud.sun.fill"
+        case "partly-cloudy-night": return "cloud.moon.fill"
+        case "cloudy": return "cloud.fill"
+        case "rain": return "cloud.rain.fill"
+        case "sleet": return "cloud.sleet.fill"
+        case "snow": return "cloud.snow.fill"
+        case "wind": return "wind"
+        case "fog": return "cloud.fog.fill"
+        default: return "cloud.fill"
+        }
+    }
+    
+    // Generate background gradient based on weather condition
+    func weatherBackgroundGradient(for condition: String, isDaytime: Bool) -> (leading: Color, trailing: Color) {
+        var colors: (Color, Color)
+        
+        if condition.contains("clear") || condition.contains("sunny") {
+            colors = isDaytime ? (Color.blue, Color.cyan) : (Color.indigo, Color.purple)
+        } else if condition.contains("cloud") {
+            colors = isDaytime ? (Color.gray, Color.blue.opacity(0.7)) : (Color.gray, Color.indigo.opacity(0.7))
+        } else if condition.contains("rain") {
+            colors = (Color.gray, Color.blue)
+        } else if condition.contains("snow") {
+            colors = (Color.gray.opacity(0.8), Color.white.opacity(0.9))
+        } else {
+            colors = isDaytime ? (Color.blue, Color.purple.opacity(0.7)) : (Color.indigo, Color.purple)
+        }
+        
+        return colors
+    }
+    
+    // Check if data is stale and needs refresh
+    func isDataStale(_ widgetData: WeatherWidgetData) -> Bool {
+        // Consider data stale if older than 1 hour
+        let staleThreshold: TimeInterval = 60 * 60 // 1 hour in seconds
+        let timeSinceUpdate = Date().timeIntervalSince(widgetData.lastUpdated)
+        
+        return timeSinceUpdate > staleThreshold
+    }
+}
+
+// MARK: - Color extension for Widget
+import SwiftUI
+
+extension Color {
+    static let weatherBlue = Color(red: 0.4, green: 0.8, blue: 1.0)
+    static let weatherYellow = Color(red: 1.0, green: 0.8, blue: 0.0)
+    static let weatherGray = Color(red: 0.6, green: 0.6, blue: 0.6)
 }
