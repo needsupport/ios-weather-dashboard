@@ -113,9 +113,10 @@ The application follows a reactive programming paradigm using Combine:
 - Widget extension implementation
 
 #### In Progress
-- Comprehensive error handling with user-friendly messaging
+- CoreData migration for improved data storage
+- Enhanced location handling for non-US locations
+- Comprehensive testing implementation
 - UI animations and transitions for smoother experience
-- Expanding test coverage
 - Performance optimization for larger datasets
 - Accessibility improvements
 
@@ -127,28 +128,71 @@ The application follows a reactive programming paradigm using Combine:
 - Push notification handling for severe weather alerts
 - Background refresh implementation
 
-## Roadmap
+## Implementation Roadmap
 
-### Near-term (1-3 months)
-- Complete offline mode with persistent storage (CoreData migration)
-- Add detailed historical data comparisons
-- Implement weather alert notifications
-- Enhance data visualization with more chart types
-- Add pull-to-refresh for weather data
+### Phase 1: Core Functionality (Priority: High)
 
-### Mid-term (3-6 months)
-- Add precipitation radar maps
-- Integrate air quality data
-- Add pollen and allergen forecasts
-- Theme customization options
-- Apple Watch companion app
+1. **CoreData Migration** ([Issue #11](https://github.com/needsupport/ios-weather-dashboard/issues/11))
+   - Migrate from UserDefaults to CoreData for better data management
+   - Create proper entities for weather data, forecasts, and locations
+   - Implement data migration path
+   - Add background sync capabilities
 
-### Long-term (6+ months)
-- Weather camera integration from public sources
-- Trip planning feature with weather forecasts
-- Weather impact assessment for scheduled events
-- Integration with smart home platforms (HomeKit)
-- Machine learning for personalized forecasts
+2. **Enhanced Location Handling** ([Issue #12](https://github.com/needsupport/ios-weather-dashboard/issues/12))
+   - Improve detection of US vs non-US locations
+   - Implement fallback API for international locations
+   - Add user feedback for location status
+   - Create graceful error handling for location issues
+
+3. **Comprehensive Testing** ([Issue #13](https://github.com/needsupport/ios-weather-dashboard/issues/13))
+   - Implement unit tests for all components
+   - Add UI tests for critical user flows
+   - Create performance testing baseline
+   - Implement snapshot testing for UI components
+   - Set up continuous integration
+
+### Phase 2: UI and UX Improvements (Priority: Medium)
+
+1. **Visual Design System** ([Issue #6](https://github.com/needsupport/ios-weather-dashboard/issues/6))
+   - Create consistent color system
+   - Implement typography hierarchy
+   - Develop reusable UI components
+   - Add animations and transitions
+
+2. **Widget Implementation** ([Issue #7](https://github.com/needsupport/ios-weather-dashboard/issues/7))
+   - Create home screen widgets in multiple sizes
+   - Implement lock screen widgets
+   - Add timeline provider for updates
+   - Create widget configuration options
+
+3. **Accessibility Improvements**
+   - Add VoiceOver support
+   - Improve Dynamic Type compatibility
+   - Enhance color contrast
+   - Add proper accessibility labels
+
+### Phase 3: Advanced Features (Priority: Low)
+
+1. **Weather Maps**
+   - Implement precipitation map visualization
+   - Add radar data integration
+   - Create interactive map controls
+
+2. **Historical Data Analysis**
+   - Add historical data comparison
+   - Create visualizations for trends
+   - Implement statistical analysis tools
+
+3. **Trip Planning**
+   - Create multi-location forecast view
+   - Add trip duration weather overview
+   - Implement travel-time weather prediction
+
+## Development Timeline
+
+- **Short-term (1-2 months)**: Complete CoreData migration, location handling, and testing
+- **Medium-term (3-4 months)**: Implement UI improvements and widget optimization
+- **Long-term (5-6 months)**: Add advanced features and platform integrations
 
 ## Setup Instructions
 
@@ -236,24 +280,11 @@ The app implements several performance optimizations:
 - Location services have multiple fallback mechanisms for reliable operation
 - Widget extension shares code with main app to reduce duplication
 
-### Testing Considerations
-- Current test coverage is approximately 65% 
-- Need more UI tests for critical user flows
-- Cache expiration logic should have dedicated tests
-- Consider implementing snapshot tests for UI components
-
 ### Future Technical Debt Concerns
 - The current UserDefaults-based cache won't scale well with increased data volume
 - Some SwiftUI views exceed 300 lines and should be refactored into smaller components
 - Chart rendering code has performance issues on older devices with large datasets
 - Weather API response mapping has some duplication that should be abstracted
-
-### Recommendations for Next Sprint
-1. Prioritize CoreData migration for the caching system
-2. Implement UI tests for critical user flows
-3. Improve error messaging for better user experience
-4. Optimize chart rendering for performance on older devices
-5. Implement background refresh capability for up-to-date widgets
 
 ## Contributing
 
