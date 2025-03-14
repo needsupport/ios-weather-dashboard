@@ -1,297 +1,328 @@
 import WidgetKit
 import SwiftUI
 
-/// Entry for the weather widget
-struct WeatherEntry: TimelineEntry {
-    let date: Date
-    let location: String
-    let temperature: Double
-    let description: String
-    let icon: String
-    let precipitation: Double
-    let windSpeed: Double
-}
-
-/// Provider for weather widget data
-struct WeatherWidgetProvider: TimelineProvider {
-    func placeholder(in context: Context) -> WeatherEntry {
-        WeatherEntry(
-            date: Date(),
-            location: "Seattle, WA",
-            temperature: 72,
-            description: "Partly Cloudy",
-            icon: "cloud",
-            precipitation: 20,
-            windSpeed: 5
-        )
-    }
+struct Provider: TimelineProvider {
+    // Use WeatherCacheService to get data
+    let weatherCacheService = WeatherCacheService()
     
+    func placeholder(in context: Context) -> WeatherEntry {
+        // Return mock data for placeholder
+        return WeatherEntry(date: Date(), location: "San Francisco", temperature: 72, condition: "sunny", high: 75, low: 65)
+    }
+
     func getSnapshot(in context: Context, completion: @escaping (WeatherEntry) -> Void) {
-        let entry = WeatherEntry(
-            date: Date(),
-            location: "Seattle, WA",
-            temperature: 72,
-            description: "Partly Cloudy",
-            icon: "cloud",
-            precipitation: 20,
-            windSpeed: 5
-        )
+        // Return snapshot data (either latest cache or mock)
+        let entry: WeatherEntry
+        
+        if let cachedData = getSavedWeatherData() {
+            entry = cachedData
+        } else {
+            entry = WeatherEntry(date: Date(), location: "San Francisco", temperature: 72, condition: "sunny", high: 75, low: 65)
+        }
+        
         completion(entry)
     }
-    
+
     func getTimeline(in context: Context, completion: @escaping (Timeline<WeatherEntry>) -> Void) {
-        // In a real app, we would fetch weather data here
-        // For now, just create placeholder data
         let currentDate = Date()
         let refreshDate = Calendar.current.date(byAdding: .minute, value: 15, to: currentDate)!
         
-        let entry = WeatherEntry(
-            date: currentDate,
-            location: "Seattle, WA",
-            temperature: 72,
-            description: "Partly Cloudy",
-            icon: "cloud",
-            precipitation: 20,
-            windSpeed: 5
-        )
-        
-        let timeline = Timeline(entries: [entry], policy: .after(refreshDate))
-        completion(timeline)
-    }
-}
-
-/// Weather widget view
-struct WeatherWidgetEntryView: View {
-    var entry: WeatherWidgetProvider.Entry
-    @Environment(\.widgetFamily) var widgetFamily
-    
-    var body: some View {
-        switch widgetFamily {
-        case .systemSmall:
-            smallWidget
-        case .systemMedium:
-            mediumWidget
-        case .systemLarge:
-            largeWidget
-        default:
-            smallWidget
+        // Get data from cache
+        if let entry = getSavedWeatherData() {
+            let timeline = Timeline(entries: [entry], policy: .after(refreshDate))
+            completion(timeline)
+        } else {
+            // Fallback to mock data
+            let entry = WeatherEntry(date: currentDate, location: "San Francisco", temperature: 72, condition: "sunny", high: 75, low: 65)
+            let timeline = Timeline(entries: [entry], policy: .after(refreshDate))
+            completion(timeline)
         }
     }
     
-    /// Small widget layout
-    var smallWidget: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.location)
-                .font(.caption)
-                .foregroundColor(.secondary)
+    // Helper method to get weather data from cache
+    private func getSavedWeatherData() -> WeatherEntry? {
+        let userDefaults = UserDefaults(suiteName: "group.com.yourcompany.weatherapp")
+        
+        // Try to get last used location
+        guard let locationName = userDefaults?.string(forKey: "lastLocationName") else {
+            return nil
+        }
+        
+        // Try to get cached data for this location
+        guard let cachedData = weatherCacheService.loadCachedData(for: locationName) else {
+            return nil
+        }
+        
+        // Create entry from cached data
+        guard let todayForecast = cachedData.daily.first else {
+            return nil
+        }
+        
+        return WeatherEntry(
+            date: Date(),
+            location: cachedData.location,
+            temperature: Int(todayForecast.tempHigh),
+            condition: todayForecast.shortForecast.lowercased(),
+            high: Int(todayForecast.tempHigh),
+            low: Int(todayForecast.tempLow)
+        )
+    }
+}
+
+struct WeatherEntry: TimelineEntry {
+    let date: Date
+    let location: String
+    let temperature: Int
+    let condition: String
+    let high: Int
+    let low: Int
+}
+
+struct WeatherWidgetEntryView : View {
+    var entry: Provider.Entry
+    @Environment(\.widgetFamily) var family
+
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [.blue.opacity(0.5), .blue.opacity(0.2)]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
             
-            HStack {
-                weatherIcon(for: entry.icon)
-                    .font(.system(size: 36))
+            VStack(alignment: .leading) {
+                // Location
+                Text(entry.location)
+                    .font(.system(size: family == .systemSmall ? 12 : 14, weight: .medium))
+                    .lineLimit(1)
                 
-                VStack(alignment: .leading) {
-                    Text("\(Int(entry.temperature))°")
-                        .font(.title)
-                        .fontWeight(.bold)
+                if family != .systemSmall {
+                    Spacer()
+                }
+                
+                HStack(alignment: .center) {
+                    // Weather icon
+                    Image(systemName: weatherIcon(for: entry.condition))
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: family == .systemSmall ? 30 : 40))
                     
-                    Text(entry.description)
-                        .font(.caption)
+                    Spacer()
+                    
+                    // Temperature
+                    VStack(alignment: .trailing) {
+                        Text("\(entry.temperature)°")
+                            .font(.system(size: family == .systemSmall ? 28 : 34, weight: .bold))
+                        
+                        if family != .systemSmall {
+                            // High/Low
+                            Text("H:\(entry.high)° L:\(entry.low)°")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                if family != .systemSmall {
+                    Spacer()
+                    
+                    // Condition text
+                    Text(entry.condition.capitalized)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
             }
-            
-            Spacer()
-            
-            HStack {
-                Label("\(Int(entry.precipitation))%", systemImage: "drop.fill")
-                    .font(.caption2)
-                
-                Spacer()
-                
-                Label("\(Int(entry.windSpeed)) mph", systemImage: "wind")
-                    .font(.caption2)
-            }
-            .foregroundColor(.secondary)
-        }
-        .padding()
-    }
-    
-    /// Medium widget layout
-    var mediumWidget: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.location)
-                    .font(.headline)
-                
-                Spacer()
-                
-                HStack(alignment: .top, spacing: 2) {
-                    Text("\(Int(entry.temperature))")
-                        .font(.system(size: 42, weight: .medium))
-                    
-                    Text("°F")
-                        .font(.body)
-                        .offset(y: 6)
-                }
-                
-                Text(entry.description)
-                    .font(.subheadline)
-                
-                Spacer()
-                
-                HStack(spacing: 10) {
-                    Label("\(Int(entry.precipitation))%", systemImage: "drop.fill")
-                    Label("\(Int(entry.windSpeed)) mph", systemImage: "wind")
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            weatherIcon(for: entry.icon)
-                .font(.system(size: 80))
-        }
-        .padding()
-    }
-    
-    /// Large widget layout
-    var largeWidget: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(entry.location)
-                .font(.headline)
-            
-            HStack {
-                VStack(alignment: .leading) {
-                    HStack(alignment: .top, spacing: 2) {
-                        Text("\(Int(entry.temperature))")
-                            .font(.system(size: 54, weight: .medium))
-                        
-                        Text("°F")
-                            .font(.title)
-                            .offset(y: 8)
-                    }
-                    
-                    Text(entry.description)
-                        .font(.title3)
-                }
-                
-                Spacer()
-                
-                weatherIcon(for: entry.icon)
-                    .font(.system(size: 100))
-            }
-            
-            Divider()
-            
-            // Weather metrics
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                metricView(icon: "drop.fill", title: "Precipitation", value: "\(Int(entry.precipitation))%")
-                metricView(icon: "wind", title: "Wind", value: "\(Int(entry.windSpeed)) mph")
-                metricView(icon: "sun.max.fill", title: "UV Index", value: "5 (Moderate)")
-                metricView(icon: "humidity.fill", title: "Humidity", value: "45%")
-            }
-            
-            Spacer()
-            
-            Text("Updated: \(entry.date.formatted(date: .abbreviated, time: .shortened))")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-        .padding()
-    }
-    
-    /// Helper for creating metric view items
-    func metricView(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(.blue)
-                .frame(width: 24)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Text(value)
-                    .font(.headline)
-            }
+            .padding()
         }
     }
     
-    /// Weather icon based on condition type
-    @ViewBuilder
-    func weatherIcon(for iconType: String) -> some View {
-        switch iconType {
-        case "sun":
-            Image(systemName: "sun.max.fill")
-                .symbolRenderingMode(.multicolor)
-        case "cloud":
-            Image(systemName: "cloud.fill")
-                .symbolRenderingMode(.multicolor)
-        case "rain":
-            Image(systemName: "cloud.rain.fill")
-                .symbolRenderingMode(.multicolor)
-        case "snow":
-            Image(systemName: "snow")
-                .symbolRenderingMode(.multicolor)
-        default:
-            Image(systemName: "cloud.fill")
-                .symbolRenderingMode(.multicolor)
+    // Map condition to SF Symbol
+    func weatherIcon(for condition: String) -> String {
+        if condition.contains("clear") || condition.contains("sunny") {
+            return "sun.max.fill"
+        } else if condition.contains("partly cloudy") || condition.contains("mostly sunny") {
+            return "cloud.sun.fill"
+        } else if condition.contains("cloudy") || condition.contains("overcast") {
+            return "cloud.fill"
+        } else if condition.contains("rain") || condition.contains("shower") {
+            return "cloud.rain.fill"
+        } else if condition.contains("thunderstorm") || condition.contains("tstorm") {
+            return "cloud.bolt.rain.fill"
+        } else if condition.contains("snow") || condition.contains("flurries") {
+            return "cloud.snow.fill"
+        } else if condition.contains("fog") || condition.contains("haze") {
+            return "cloud.fog.fill"
+        } else if condition.contains("wind") {
+            return "wind"
+        }
+        return "cloud.fill" // Default
+    }
+}
+
+struct WeatherWidget: Widget {
+    let kind: String = "WeatherWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: Provider()) { entry in
+            WeatherWidgetEntryView(entry: entry)
+        }
+        .configurationDisplayName("Weather")
+        .description("View current weather conditions")
+        .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+struct WeatherLockScreenWidget: Widget {
+    let kind: String = "WeatherLockScreenWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: Provider()) { entry in
+            LockScreenWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Weather")
+        .description("View current weather on lock screen")
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular])
+    }
+}
+
+struct LockScreenWidgetView: View {
+    var entry: Provider.Entry
+    @Environment(\.widgetFamily) var family
+
+    var body: some View {
+        if family == .accessoryCircular {
+            CircularWidgetView(entry: entry)
+        } else {
+            RectangularWidgetView(entry: entry)
         }
     }
 }
 
-/// Widget configuration
-struct WeatherWidget: Widget {
-    private let kind = "WeatherWidget"
+struct CircularWidgetView: View {
+    var entry: Provider.Entry
     
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: WeatherWidgetProvider()) { entry in
-            WeatherWidgetEntryView(entry: entry)
+    var body: some View {
+        ZStack {
+            Gauge(value: Double(entry.temperature), in: -10...100) {
+                Image(systemName: weatherIcon(for: entry.condition))
+                    .symbolRenderingMode(.multicolor)
+            }
+            .gaugeStyle(.accessoryCircular)
+            
+            Text("\(entry.temperature)°")
+                .font(.system(size: 16, weight: .bold))
+                .offset(y: 12)
         }
-        .configurationDisplayName("Weather")
-        .description("Shows current weather conditions.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+    
+    // Map condition to SF Symbol
+    func weatherIcon(for condition: String) -> String {
+        if condition.contains("clear") || condition.contains("sunny") {
+            return "sun.max.fill"
+        } else if condition.contains("partly cloudy") || condition.contains("mostly sunny") {
+            return "cloud.sun.fill"
+        } else if condition.contains("cloudy") || condition.contains("overcast") {
+            return "cloud.fill"
+        } else if condition.contains("rain") || condition.contains("shower") {
+            return "cloud.rain.fill"
+        } else if condition.contains("thunderstorm") || condition.contains("tstorm") {
+            return "cloud.bolt.rain.fill"
+        } else if condition.contains("snow") || condition.contains("flurries") {
+            return "cloud.snow.fill"
+        } else if condition.contains("fog") || condition.contains("haze") {
+            return "cloud.fog.fill"
+        } else if condition.contains("wind") {
+            return "wind"
+        }
+        return "cloud.fill" // Default
+    }
+}
+
+struct RectangularWidgetView: View {
+    var entry: Provider.Entry
+    
+    var body: some View {
+        HStack {
+            Image(systemName: weatherIcon(for: entry.condition))
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 22))
+            
+            VStack(alignment: .leading) {
+                Text(entry.location)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                
+                Text("\(entry.temperature)° | H:\(entry.high)° L:\(entry.low)°")
+                    .font(.system(size: 10))
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+    
+    // Map condition to SF Symbol
+    func weatherIcon(for condition: String) -> String {
+        if condition.contains("clear") || condition.contains("sunny") {
+            return "sun.max.fill"
+        } else if condition.contains("partly cloudy") || condition.contains("mostly sunny") {
+            return "cloud.sun.fill"
+        } else if condition.contains("cloudy") || condition.contains("overcast") {
+            return "cloud.fill"
+        } else if condition.contains("rain") || condition.contains("shower") {
+            return "cloud.rain.fill"
+        } else if condition.contains("thunderstorm") || condition.contains("tstorm") {
+            return "cloud.bolt.rain.fill"
+        } else if condition.contains("snow") || condition.contains("flurries") {
+            return "cloud.snow.fill"
+        } else if condition.contains("fog") || condition.contains("haze") {
+            return "cloud.fog.fill"
+        } else if condition.contains("wind") {
+            return "wind"
+        }
+        return "cloud.fill" // Default
     }
 }
 
 struct WeatherWidget_Previews: PreviewProvider {
     static var previews: some View {
-        Group {
-            WeatherWidgetEntryView(entry: WeatherEntry(
-                date: Date(),
-                location: "Seattle, WA",
-                temperature: 72,
-                description: "Partly Cloudy",
-                icon: "cloud",
-                precipitation: 20,
-                windSpeed: 5
-            ))
-            .previewContext(WidgetPreviewContext(family: .systemSmall))
-            
-            WeatherWidgetEntryView(entry: WeatherEntry(
-                date: Date(),
-                location: "Seattle, WA",
-                temperature: 72,
-                description: "Partly Cloudy",
-                icon: "cloud",
-                precipitation: 20,
-                windSpeed: 5
-            ))
-            .previewContext(WidgetPreviewContext(family: .systemMedium))
-            
-            WeatherWidgetEntryView(entry: WeatherEntry(
-                date: Date(),
-                location: "Seattle, WA",
-                temperature: 72,
-                description: "Partly Cloudy",
-                icon: "cloud",
-                precipitation: 20,
-                windSpeed: 5
-            ))
-            .previewContext(WidgetPreviewContext(family: .systemLarge))
-        }
+        WeatherWidgetEntryView(entry: WeatherEntry(
+            date: Date(),
+            location: "San Francisco, CA",
+            temperature: 72,
+            condition: "partly cloudy",
+            high: 75,
+            low: 65
+        ))
+        .previewContext(WidgetPreviewContext(family: .systemSmall))
+        
+        WeatherWidgetEntryView(entry: WeatherEntry(
+            date: Date(),
+            location: "San Francisco, CA",
+            temperature: 72,
+            condition: "partly cloudy",
+            high: 75,
+            low: 65
+        ))
+        .previewContext(WidgetPreviewContext(family: .systemMedium))
+        
+        LockScreenWidgetView(entry: WeatherEntry(
+            date: Date(),
+            location: "San Francisco, CA",
+            temperature: 72,
+            condition: "partly cloudy",
+            high: 75,
+            low: 65
+        ))
+        .previewContext(WidgetPreviewContext(family: .accessoryCircular))
+        
+        LockScreenWidgetView(entry: WeatherEntry(
+            date: Date(),
+            location: "San Francisco, CA",
+            temperature: 72,
+            condition: "partly cloudy",
+            high: 75,
+            low: 65
+        ))
+        .previewContext(WidgetPreviewContext(family: .accessoryRectangular))
     }
 }
