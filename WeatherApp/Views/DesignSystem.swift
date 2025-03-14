@@ -34,52 +34,34 @@ extension Color {
         default: return Color("AlertMinor")
         }
     }
-}
-
-// MARK: - Typography System
-struct WeatherTypography {
-    // Title styles
-    static func title(_ text: Text) -> some View {
-        text.font(.system(size: 28, weight: .bold))
-            .foregroundColor(.primary)
-    }
     
-    static func headline(_ text: Text) -> some View {
-        text.font(.headline)
-            .foregroundColor(.primary)
-    }
-    
-    static func subheadline(_ text: Text) -> some View {
-        text.font(.subheadline)
-            .foregroundColor(.secondary)
-    }
-    
-    // Temperature display
-    static func temperature(_ text: Text, isHighlight: Bool = false) -> some View {
-        text.font(.system(size: isHighlight ? 50 : 24, weight: .medium, design: .rounded))
-            .foregroundColor(isHighlight ? .primary : .secondary)
-    }
-    
-    // Weather condition text
-    static func condition(_ text: Text) -> some View {
-        text.font(.system(size: 16, weight: .medium))
-            .foregroundColor(.primary)
-    }
-    
-    // Day of week
-    static func day(_ text: Text, isToday: Bool = false) -> some View {
-        text.font(.system(size: 14, weight: isToday ? .bold : .regular))
-            .foregroundColor(isToday ? .accentColor : .primary)
-    }
-    
-    // Caption text
-    static func caption(_ text: Text) -> some View {
-        text.font(.caption)
-            .foregroundColor(.secondary)
+    // Get background gradient
+    static func weatherGradient(for condition: String, isDaytime: Bool) -> LinearGradient {
+        let colors: [Color]
+        
+        if condition.contains("clear") || condition.contains("sunny") {
+            colors = isDaytime ? 
+                [Color(red: 0.4, green: 0.8, blue: 1.0), Color(red: 0.0, green: 0.5, blue: 0.9)] :
+                [Color(red: 0.1, green: 0.2, blue: 0.5), Color(red: 0.0, green: 0.0, blue: 0.3)]
+        } else if condition.contains("cloud") {
+            colors = isDaytime ?
+                [Color(red: 0.6, green: 0.7, blue: 0.9), Color(red: 0.4, green: 0.5, blue: 0.7)] :
+                [Color(red: 0.2, green: 0.2, blue: 0.3), Color(red: 0.1, green: 0.1, blue: 0.2)]
+        } else if condition.contains("rain") {
+            colors = [Color(red: 0.3, green: 0.3, blue: 0.5), Color(red: 0.1, green: 0.1, blue: 0.3)]
+        } else if condition.contains("snow") {
+            colors = [Color(red: 0.7, green: 0.7, blue: 0.9), Color(red: 0.5, green: 0.5, blue: 0.7)]
+        } else {
+            colors = isDaytime ?
+                [Color(red: 0.5, green: 0.6, blue: 0.8), Color(red: 0.3, green: 0.4, blue: 0.6)] :
+                [Color(red: 0.2, green: 0.2, blue: 0.4), Color(red: 0.1, green: 0.1, blue: 0.2)]
+        }
+        
+        return LinearGradient(gradient: Gradient(colors: colors), startPoint: .top, endPoint: .bottom)
     }
 }
 
-// MARK: - Weather Card Component
+// MARK: - Card Design System
 struct WeatherCard<Content: View>: View {
     let condition: String
     let isDaytime: Bool
@@ -105,7 +87,31 @@ struct WeatherCard<Content: View>: View {
     }
 }
 
-// MARK: - Weather Icon Component
+// MARK: - Typography System
+extension Text {
+    func weatherHeadline() -> some View {
+        self.font(.headline)
+            .foregroundColor(.primary)
+    }
+    
+    func weatherTitle() -> some View {
+        self.font(.title)
+            .fontWeight(.semibold)
+            .foregroundColor(.primary)
+    }
+    
+    func weatherSubheadline() -> some View {
+        self.font(.subheadline)
+            .foregroundColor(.secondary)
+    }
+    
+    func temperatureDisplay(isHighlight: Bool = false) -> some View {
+        self.font(.system(size: isHighlight ? 50 : 24, weight: .medium, design: .rounded))
+            .foregroundColor(isHighlight ? .primary : .secondary)
+    }
+}
+
+// MARK: - Weather Icon System
 struct WeatherIcon: View {
     let iconName: String
     let condition: String
@@ -143,72 +149,72 @@ struct WeatherIcon: View {
     }
 }
 
-// MARK: - Temperature Bar Component
-struct TemperatureBar: View {
-    let lowTemp: Double
-    let highTemp: Double
-    let minTemp: Double
-    let maxTemp: Double
+// MARK: - Weather Effects
+struct RainEffect: View {
+    @State private var isAnimating = false
+    let intensity: Double // 0.0 to 1.0
     
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                // Background bar
-                Capsule()
-                    .fill(Color.blue.opacity(0.3))
-                    .frame(width: geo.size.width, height: 4)
-                
-                // Temperature range fill
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            gradient: Gradient(colors: [.blue, .red]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: calculateBarWidth(in: geo.size.width), height: 4)
-                    .offset(x: calculateBarOffset(in: geo.size.width))
+        ZStack {
+            ForEach(0..<Int(20 * intensity), id: \.self) { index in
+                RainDrop(delay: Double.random(in: 0...2))
             }
         }
-        .frame(height: 4)
-    }
-    
-    // Calculate the width of the colored section proportional to the range
-    private func calculateBarWidth(in totalWidth: CGFloat) -> CGFloat {
-        let totalRange = maxTemp - minTemp
-        let currentRange = highTemp - lowTemp
-        return (currentRange / totalRange) * totalWidth
-    }
-    
-    // Calculate the offset from the left based on the low temp
-    private func calculateBarOffset(in totalWidth: CGFloat) -> CGFloat {
-        let totalRange = maxTemp - minTemp
-        let lowTempOffset = lowTemp - minTemp
-        return (lowTempOffset / totalRange) * totalWidth
+        .mask(
+            LinearGradient(
+                gradient: Gradient(colors: [.clear, .black, .black, .black]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 }
 
-// MARK: - Tab Selector Component
-struct TabSelector: View {
+struct RainDrop: View {
+    let delay: Double
+    @State private var offset: CGFloat = -50
+    
+    var body: some View {
+        Circle()
+            .fill(Color.white.opacity(0.2))
+            .frame(width: 2, height: 10)
+            .offset(
+                x: CGFloat.random(in: -150...150),
+                y: offset
+            )
+            .onAppear {
+                withAnimation(
+                    Animation
+                        .linear(duration: Double.random(in: 0.8...1.5))
+                        .repeatForever(autoreverses: false)
+                        .delay(delay)
+                ) {
+                    offset = 700
+                }
+            }
+    }
+}
+
+// MARK: - Improved Tab Selector
+struct ImprovedTabSelector: View {
+    @Binding var selectedTab: Int
     let titles: [String]
-    @Binding var selectedIndex: Int
     
     var body: some View {
         HStack {
             ForEach(0..<titles.count, id: \.self) { index in
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        selectedIndex = index
+                        selectedTab = index
                     }
                 }) {
                     Text(titles[index])
-                        .fontWeight(selectedIndex == index ? .bold : .regular)
-                        .foregroundColor(selectedIndex == index ? .primary : .secondary)
+                        .fontWeight(selectedTab == index ? .bold : .regular)
+                        .foregroundColor(selectedTab == index ? .primary : .secondary)
                         .padding(.vertical, 10)
                         .padding(.horizontal, 16)
                         .background(
-                            selectedIndex == index ?
+                            selectedTab == index ?
                             Capsule()
                                 .fill(Color.accentColor.opacity(0.2)) :
                             Capsule()
@@ -224,93 +230,5 @@ struct TabSelector: View {
                 .fill(Color(.secondarySystemBackground))
         )
         .padding(.horizontal)
-    }
-}
-
-// MARK: - Weather Gradient Background
-struct WeatherGradientBackground: View {
-    let condition: String
-    let isDaytime: Bool
-    
-    var body: some View {
-        LinearGradient(
-            gradient: Gradient(colors: backgroundColors),
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
-    }
-    
-    private var backgroundColors: [Color] {
-        if condition.contains("clear") || condition.contains("sunny") {
-            return isDaytime ? 
-                [Color(red: 0.4, green: 0.8, blue: 1.0), Color(red: 0.0, green: 0.5, blue: 0.9)] :
-                [Color(red: 0.1, green: 0.2, blue: 0.5), Color(red: 0.0, green: 0.0, blue: 0.3)]
-        } else if condition.contains("cloud") {
-            return isDaytime ?
-                [Color(red: 0.6, green: 0.7, blue: 0.9), Color(red: 0.4, green: 0.5, blue: 0.7)] :
-                [Color(red: 0.2, green: 0.2, blue: 0.3), Color(red: 0.1, green: 0.1, blue: 0.2)]
-        } else if condition.contains("rain") {
-            return [Color(red: 0.3, green: 0.3, blue: 0.5), Color(red: 0.1, green: 0.1, blue: 0.3)]
-        } else if condition.contains("snow") {
-            return [Color(red: 0.7, green: 0.7, blue: 0.9), Color(red: 0.5, green: 0.5, blue: 0.7)]
-        } else if condition.contains("fog") {
-            return [Color(red: 0.6, green: 0.6, blue: 0.6), Color(red: 0.3, green: 0.3, blue: 0.3)]
-        } else {
-            return isDaytime ?
-                [Color(red: 0.5, green: 0.6, blue: 0.8), Color(red: 0.3, green: 0.4, blue: 0.6)] :
-                [Color(red: 0.2, green: 0.2, blue: 0.4), Color(red: 0.1, green: 0.1, blue: 0.2)]
-        }
-    }
-}
-
-// MARK: - Weather Alert Badge
-struct WeatherAlertBadge: View {
-    let severity: String
-    let count: Int
-    
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.white)
-            
-            Text("\(count)")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(alertColor.opacity(0.9))
-        .clipShape(Capsule())
-    }
-    
-    private var alertColor: Color {
-        switch severity.lowercased() {
-        case "extreme": return .red
-        case "severe": return .orange
-        case "moderate": return .yellow
-        default: return .blue
-        }
-    }
-}
-
-// MARK: - View Extensions
-extension View {
-    // Add haptic feedback to views
-    func hapticFeedback(style: UIImpactFeedbackGenerator.FeedbackStyle = .light) -> some View {
-        self.onTapGesture {
-            let generator = UIImpactFeedbackGenerator(style: style)
-            generator.impactOccurred()
-        }
-    }
-    
-    // Apply conditional modifier
-    @ViewBuilder func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
-        if condition {
-            transform(self)
-        } else {
-            self
-        }
     }
 }
