@@ -1,4 +1,6 @@
 import SwiftUI
+import BackgroundTasks
+import WidgetKit
 
 @main
 struct WeatherApp: App {
@@ -28,11 +30,11 @@ struct WeatherApp: App {
     private func registerBackgroundTasks() {
         #if !WIDGET_EXTENSION
         // Register for background refresh
-        if #available(iOS 16.0, *) {
-            BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.yourcompany.weatherapp.refresh", using: nil) { task in
-                self.handleAppRefresh(task: task as! BGAppRefreshTask)
-            }
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.weatherapp.refresh", using: nil) { task in
+            self.handleAppRefresh(task: task as! BGAppRefreshTask)
         }
+        // Schedule the first refresh
+        scheduleAppRefresh()
         #endif
     }
     
@@ -56,22 +58,20 @@ struct WeatherApp: App {
             }
         }
         
-        // If the refresh gets canceled, cancel the task.
+        // If the refresh gets canceled, cancel the task
         task.expirationHandler = {
             refreshTask.cancel()
         }
     }
     
     private func scheduleAppRefresh() {
-        if #available(iOS 16.0, *) {
-            let request = BGAppRefreshTaskRequest(identifier: "com.yourcompany.weatherapp.refresh")
-            request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes from now
-            
-            do {
-                try BGTaskScheduler.shared.submit(request)
-            } catch {
-                print("Could not schedule app refresh: \(error)")
-            }
+        let request = BGAppRefreshTaskRequest(identifier: "com.weatherapp.refresh")
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes from now
+        
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            print("Could not schedule app refresh: \(error)")
         }
     }
 }
