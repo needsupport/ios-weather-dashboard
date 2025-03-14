@@ -42,30 +42,28 @@ extension WeatherViewModel {
                     // Update saved locations
                     self.savedLocations = locations.map { location in
                         return SavedLocation(
-                            name: location.name,
-                            coordinates: CLLocationCoordinate2D(
-                                latitude: location.latitude,
-                                longitude: location.longitude
-                            ),
                             id: location.id,
+                            name: location.name,
+                            latitude: location.latitude,
+                            longitude: location.longitude,
                             isFavorite: location.isFavorite
                         )
                     }
                     
                     // If we have a selected location, load it
                     if let selectedLocation = self.selectedLocation,
-                       let selectedName = self.selectedLocationName {
+                       let selectedLocationName = self.selectedLocationName {
                         // Find matching location in saved locations
                         if let matchingLocation = self.savedLocations.first(where: { saved in
-                            saved.coordinates.latitude == selectedLocation.latitude &&
-                            saved.coordinates.longitude == selectedLocation.longitude
+                            saved.latitude == selectedLocation.latitude &&
+                            saved.longitude == selectedLocation.longitude
                         }) {
                             // Load weather data from CoreData for this location
                             self.loadWeatherDataFromCoreData(for: matchingLocation.id)
                         }
                     } else if let firstLocation = self.savedLocations.first {
                         // No selected location, use first saved location
-                        self.selectedLocation = firstLocation.coordinates
+                        self.selectedLocation = firstLocation
                         self.selectedLocationName = firstLocation.name
                         self.loadWeatherDataFromCoreData(for: firstLocation.id)
                     }
@@ -92,7 +90,7 @@ extension WeatherViewModel {
                         // Update view model data
                         self.weatherData = weatherData
                         self.isLoading = false
-                        self.lastError = nil
+                        self.error = nil
                         
                         // Check if data is stale
                         if self.isDataStale(weatherData) {
@@ -164,7 +162,14 @@ extension WeatherViewModel {
                 
                 // Update selected location if needed
                 if self.selectedLocation == nil {
-                    self.selectedLocation = coordinates
+                    let newLocation = SavedLocation(
+                        id: locationId,
+                        name: name,
+                        latitude: coordinates.latitude,
+                        longitude: coordinates.longitude,
+                        isFavorite: isFavorite
+                    )
+                    self.selectedLocation = newLocation
                     self.selectedLocationName = name
                     self.loadWeatherDataFromCoreData(for: locationId)
                 }
@@ -192,11 +197,11 @@ extension WeatherViewModel {
                     // If deleted location was selected, select another one
                     if let selectedLocation = self.selectedLocation,
                        let deletedLocation = self.savedLocations.first(where: { $0.id == locationId }),
-                       deletedLocation.coordinates.latitude == selectedLocation.latitude &&
-                       deletedLocation.coordinates.longitude == selectedLocation.longitude {
+                       deletedLocation.latitude == selectedLocation.latitude &&
+                       deletedLocation.longitude == selectedLocation.longitude {
                         
                         if let firstLocation = self.savedLocations.first(where: { $0.id != locationId }) {
-                            self.selectedLocation = firstLocation.coordinates
+                            self.selectedLocation = firstLocation
                             self.selectedLocationName = firstLocation.name
                             self.loadWeatherDataFromCoreData(for: firstLocation.id)
                         } else {
@@ -224,8 +229,8 @@ extension WeatherViewModel {
         // Update in CoreData
         CoreDataManager.shared.saveLocation(
             name: location.name,
-            latitude: location.coordinates.latitude,
-            longitude: location.coordinates.longitude,
+            latitude: location.latitude,
+            longitude: location.longitude,
             isFavorite: newFavoriteStatus
         )
         .sink(
