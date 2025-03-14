@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreLocation
 
 // This extension adds caching support to the WeatherViewModel
 extension WeatherViewModel {
@@ -57,6 +58,9 @@ extension WeatherViewModel {
                 
                 // Cache the data
                 self.weatherCacheService.save(weatherData: weatherData, for: locationName)
+                
+                // Also save to app group for widget access
+                self.saveToWidgetCache(weatherData: weatherData, locationName: locationName)
             })
             .store(in: &cancellables)
     }
@@ -82,8 +86,35 @@ extension WeatherViewModel {
                 
                 // Update the cache
                 self.weatherCacheService.save(weatherData: self.weatherData, for: locationName)
+                
+                // Update widget cache
+                self.saveToWidgetCache(weatherData: self.weatherData, locationName: locationName)
             })
             .store(in: &cancellables)
+    }
+    
+    // Save essential data to widget app group
+    private func saveToWidgetCache(weatherData: WeatherData, locationName: String) {
+        guard let userDefaults = UserDefaults(suiteName: "group.com.yourcompany.weatherapp") else {
+            return
+        }
+        
+        // Save last location name for widget
+        userDefaults.set(locationName, forKey: "lastLocationName")
+        
+        // Save minimal data for widget
+        if let todayForecast = weatherData.daily.first {
+            let widgetData: [String: Any] = [
+                "location": weatherData.location,
+                "temperature": todayForecast.tempHigh,
+                "condition": todayForecast.shortForecast,
+                "high": todayForecast.tempHigh,
+                "low": todayForecast.tempLow,
+                "lastUpdated": Date().timeIntervalSince1970
+            ]
+            
+            userDefaults.set(widgetData, forKey: "widgetWeatherData")
+        }
     }
     
     // Handle errors during data fetch with fallback to cache
@@ -169,7 +200,18 @@ extension WeatherViewModel {
             return lastLocationName
         }
         
-        return nil
+        // Try to reverse geocode the coordinates
+        let group = DispatchGroup()
+        var locationName: String?
+        
+        group.enter()
+        LocationManager.shared.reverseGeocode(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) { name in
+            locationName = name
+            group.leave()
+        }
+        
+        _ = group.wait(timeout: .now() + 2.0)
+        return locationName
     }
     
     // Clear cache for current location
