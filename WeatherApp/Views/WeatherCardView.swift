@@ -5,103 +5,137 @@ struct WeatherCardView: View {
     @EnvironmentObject var viewModel: WeatherViewModel
     @State private var isShowingDetails = false
     
+    // Check if this is today's forecast
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(forecast.date)
+    }
+    
+    // Check if it's daytime
+    private var isDaytime: Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        return hour >= 6 && hour < 20
+    }
+    
     var body: some View {
-        VStack(spacing: 12) {
-            // Day name
-            Text(forecast.fullDay)
-                .font(.headline)
-            
-            // Weather icon
-            Image(systemName: viewModel.getSystemIcon(from: forecast.icon))
-                .symbolRenderingMode(.multicolor)
-                .font(.system(size: 30))
+        WeatherCard(condition: forecast.shortForecast, isDaytime: isDaytime) {
+            VStack(spacing: 12) {
+                // Day name with "Today" highlight
+                WeatherTypography.day(
+                    Text(isToday ? "Today" : forecast.day), 
+                    isToday: isToday
+                )
+                
+                // Weather icon
+                WeatherIcon(
+                    iconName: forecast.icon,
+                    condition: forecast.shortForecast,
+                    size: 30
+                )
                 .padding(.vertical, 5)
-            
-            // Weather description
-            Text(forecast.shortForecast)
-                .font(.caption)
+                
+                // Weather description
+                WeatherTypography.caption(
+                    Text(forecast.shortForecast)
+                )
                 .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            
-            // Temperature range
-            HStack(spacing: 5) {
-                // High
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 10))
-                        .foregroundColor(.red)
-                    Text(viewModel.getTemperatureString(forecast.tempHigh))
-                        .fontWeight(.medium)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 36)
+                
+                // Temperature range with visual indicators
+                HStack(spacing: 12) {
+                    // High temp
+                    VStack(alignment: .center, spacing: 2) {
+                        Text("High")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text(viewModel.getTemperatureString(forecast.tempHigh))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.red)
+                    }
+                    
+                    // Temperature bar visualization
+                    TemperatureBar(
+                        lowTemp: forecast.tempLow,
+                        highTemp: forecast.tempHigh,
+                        minTemp: viewModel.weatherData.daily.map { $0.tempLow }.min() ?? (forecast.tempLow - 5),
+                        maxTemp: viewModel.weatherData.daily.map { $0.tempHigh }.max() ?? (forecast.tempHigh + 5)
+                    )
+                    .frame(height: 4)
+                    .padding(.vertical, 8)
+                    
+                    // Low temp
+                    VStack(alignment: .center, spacing: 2) {
+                        Text("Low")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text(viewModel.getTemperatureString(forecast.tempLow))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.blue)
+                    }
                 }
                 
-                // Low
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.down")
+                // Precipitation indicator
+                HStack(spacing: 4) {
+                    Image(systemName: "drop.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.blue)
-                    Text(viewModel.getTemperatureString(forecast.tempLow))
-                        .foregroundColor(.secondary)
+                    Text("\(Int(forecast.precipitation.chance))%")
+                        .font(.caption)
                 }
-            }
-            .font(.subheadline)
-            
-            // Precipitation indicator
-            HStack(spacing: 4) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.blue)
-                Text("\(Int(forecast.precipitation.chance))%")
-                    .font(.caption)
-            }
-            .opacity(forecast.precipitation.chance > 0 ? 1.0 : 0.3)
-            
-            // Divider
-            Divider()
+                .opacity(forecast.precipitation.chance > 0 ? 1.0 : 0.3)
+                
+                // Divider
+                Divider()
+                    .padding(.horizontal, 10)
+                
+                // Bottom row with additional info
+                HStack {
+                    // Wind
+                    HStack(spacing: 2) {
+                        Image(systemName: "wind")
+                            .font(.system(size: 10))
+                        Text("\(Int(forecast.wind.speed))")
+                            .font(.caption)
+                    }
+                    
+                    Spacer()
+                    
+                    // UV Index
+                    HStack(spacing: 2) {
+                        Image(systemName: "sun.max.fill")
+                            .font(.system(size: 10))
+                        Text("\(forecast.uvIndex)")
+                            .font(.caption)
+                    }
+                }
+                .foregroundColor(.secondary)
                 .padding(.horizontal, 10)
-            
-            // Bottom row with additional info
-            HStack {
-                // Wind
-                HStack(spacing: 2) {
-                    Image(systemName: "wind")
-                        .font(.system(size: 10))
-                    Text("\(Int(forecast.wind.speed))")
-                        .font(.caption)
-                }
-                
-                Spacer()
-                
-                // UV Index
-                HStack(spacing: 2) {
-                    Image(systemName: "sun.max.fill")
-                        .font(.system(size: 10))
-                    Text("\(forecast.uvIndex)")
-                        .font(.caption)
-                }
             }
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 10)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-        )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(viewModel.selectedDayID == forecast.id ? Color.blue : Color.clear, lineWidth: 2)
+                .stroke(viewModel.selectedDayID == forecast.id ? Color.accentColor : Color.clear, lineWidth: 2)
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            hapticFeedback()
             viewModel.setSelectedDay(forecast.id)
             isShowingDetails.toggle()
         }
         .sheet(isPresented: $isShowingDetails) {
             DayDetailView(forecast: forecast)
         }
+    }
+    
+    // Haptic feedback helper
+    private func hapticFeedback() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
     }
 }
 
@@ -110,169 +144,178 @@ struct DayDetailView: View {
     let forecast: DailyForecast
     @EnvironmentObject var viewModel: WeatherViewModel
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
+    
+    // Check if it's daytime
+    private var isDaytime: Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        return hour >= 6 && hour < 20
+    }
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Main info section
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Header with day and date
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(forecast.fullDay)
-                                    .font(.title)
-                                    .fontWeight(.bold)
-                                
-                                Text(formattedDate(forecast.date))
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            // Weather icon
-                            Image(systemName: viewModel.getSystemIcon(from: forecast.icon))
-                                .symbolRenderingMode(.multicolor)
-                                .font(.system(size: 50))
-                        }
-                        
-                        // Temperature and conditions
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                // High temperature
-                                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                                    Text("High:")
-                                        .foregroundColor(.secondary)
-                                    Text(viewModel.getTemperatureString(forecast.tempHigh))
-                                        .font(.title2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.red)
+            ZStack {
+                // Background gradient
+                WeatherGradientBackground(
+                    condition: forecast.shortForecast,
+                    isDaytime: isDaytime
+                )
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        // Main info section
+                        WeatherCard(condition: forecast.shortForecast, isDaytime: isDaytime) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                // Header with day and date
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        WeatherTypography.title(
+                                            Text(forecast.fullDay)
+                                        )
+                                        
+                                        WeatherTypography.subheadline(
+                                            Text(formattedDate(forecast.date))
+                                        )
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    // Weather icon
+                                    WeatherIcon(
+                                        iconName: forecast.icon,
+                                        condition: forecast.shortForecast,
+                                        size: 50
+                                    )
                                 }
                                 
-                                // Low temperature
-                                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                                    Text("Low:")
-                                        .foregroundColor(.secondary)
-                                    Text(viewModel.getTemperatureString(forecast.tempLow))
-                                        .font(.title2)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.blue)
+                                // Temperature and conditions
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        // High temperature
+                                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                            Text("High:")
+                                                .foregroundColor(.secondary)
+                                            WeatherTypography.temperature(
+                                                Text(viewModel.getTemperatureString(forecast.tempHigh))
+                                            )
+                                            .foregroundColor(.red)
+                                        }
+                                        
+                                        // Low temperature
+                                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                            Text("Low:")
+                                                .foregroundColor(.secondary)
+                                            WeatherTypography.temperature(
+                                                Text(viewModel.getTemperatureString(forecast.tempLow))
+                                            )
+                                            .foregroundColor(.blue)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    // Condition description
+                                    WeatherTypography.condition(
+                                        Text(forecast.shortForecast)
+                                    )
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 150, alignment: .trailing)
+                                }
+                                
+                                // Detailed forecast
+                                Text(forecast.detailedForecast)
+                                    .font(.body)
+                                    .padding(.top, 5)
+                            }
+                        }
+                        
+                        // Weather metrics section
+                        WeatherCard(condition: forecast.shortForecast, isDaytime: isDaytime) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                WeatherTypography.headline(
+                                    Text("Weather Metrics")
+                                )
+                                .padding(.bottom, 4)
+                                
+                                // Grid of metrics
+                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                                    // Precipitation
+                                    metricCard(
+                                        title: "Precipitation",
+                                        value: "\(Int(forecast.precipitation.chance))%",
+                                        icon: "drop.fill",
+                                        color: .blue
+                                    )
+                                    
+                                    // Humidity
+                                    if let humidity = forecast.humidity {
+                                        metricCard(
+                                            title: "Humidity",
+                                            value: "\(Int(humidity))%",
+                                            icon: "humidity",
+                                            color: .cyan
+                                        )
+                                    }
+                                    
+                                    // Wind
+                                    metricCard(
+                                        title: "Wind",
+                                        value: "\(Int(forecast.wind.speed)) mph",
+                                        subtitle: forecast.wind.direction,
+                                        icon: "wind",
+                                        color: .teal
+                                    )
+                                    
+                                    // UV Index
+                                    metricCard(
+                                        title: "UV Index",
+                                        value: "\(forecast.uvIndex)",
+                                        subtitle: uvIndexCategory(forecast.uvIndex),
+                                        icon: "sun.max.fill",
+                                        color: uvIndexColor(forecast.uvIndex)
+                                    )
+                                    
+                                    // Dew Point
+                                    if let dewpoint = forecast.dewpoint {
+                                        metricCard(
+                                            title: "Dew Point",
+                                            value: viewModel.getTemperatureString(dewpoint),
+                                            icon: "thermometer.medium",
+                                            color: .green
+                                        )
+                                    }
+                                    
+                                    // Pressure
+                                    if let pressure = forecast.pressure {
+                                        metricCard(
+                                            title: "Pressure",
+                                            value: "\(Int(pressure)) hPa",
+                                            icon: "gauge",
+                                            color: .purple
+                                        )
+                                    }
+                                    
+                                    // Sky Cover
+                                    if let skyCover = forecast.skyCover {
+                                        metricCard(
+                                            title: "Cloud Cover",
+                                            value: "\(Int(skyCover))%",
+                                            icon: "cloud.fill",
+                                            color: .gray
+                                        )
+                                    }
                                 }
                             }
-                            
-                            Spacer()
-                            
-                            // Condition description
-                            Text(forecast.shortForecast)
-                                .font(.headline)
-                                .multilineTextAlignment(.trailing)
-                                .frame(maxWidth: 150, alignment: .trailing)
-                        }
-                        
-                        // Detailed forecast
-                        Text(forecast.detailedForecast)
-                            .font(.body)
-                            .padding(.top, 5)
-                    }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemBackground))
-                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    )
-                    
-                    // Weather metrics section
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Weather Metrics")
-                            .font(.headline)
-                            .padding(.bottom, 4)
-                        
-                        // Grid of metrics
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                            // Precipitation
-                            metricCard(
-                                title: "Precipitation",
-                                value: "\(Int(forecast.precipitation.chance))%",
-                                icon: "drop.fill",
-                                color: .blue
-                            )
-                            
-                            // Humidity
-                            if let humidity = forecast.humidity {
-                                metricCard(
-                                    title: "Humidity",
-                                    value: "\(Int(humidity))%",
-                                    icon: "humidity",
-                                    color: .cyan
-                                )
-                            }
-                            
-                            // Wind
-                            metricCard(
-                                title: "Wind",
-                                value: "\(Int(forecast.wind.speed)) mph",
-                                subtitle: forecast.wind.direction,
-                                icon: "wind",
-                                color: .teal
-                            )
-                            
-                            // UV Index
-                            metricCard(
-                                title: "UV Index",
-                                value: "\(forecast.uvIndex)",
-                                subtitle: uvIndexCategory(forecast.uvIndex),
-                                icon: "sun.max.fill",
-                                color: uvIndexColor(forecast.uvIndex)
-                            )
-                            
-                            // Dew Point
-                            if let dewpoint = forecast.dewpoint {
-                                metricCard(
-                                    title: "Dew Point",
-                                    value: viewModel.getTemperatureString(dewpoint),
-                                    icon: "thermometer.medium",
-                                    color: .green
-                                )
-                            }
-                            
-                            // Pressure
-                            if let pressure = forecast.pressure {
-                                metricCard(
-                                    title: "Pressure",
-                                    value: "\(Int(pressure)) hPa",
-                                    icon: "gauge",
-                                    color: .purple
-                                )
-                            }
-                            
-                            // Sky Cover
-                            if let skyCover = forecast.skyCover {
-                                metricCard(
-                                    title: "Cloud Cover",
-                                    value: "\(Int(skyCover))%",
-                                    icon: "cloud.fill",
-                                    color: .gray
-                                )
-                            }
                         }
                     }
                     .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemBackground))
-                            .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    )
-                    
-                    // Hourly forecast section (if needed)
-                    // Add implementation here if required
                 }
-                .padding()
+                .navigationBarTitle("Weather Details", displayMode: .inline)
+                .navigationBarItems(trailing: Button("Done") {
+                    dismiss()
+                })
+                .foregroundColor(colorScheme == .dark ? .white : .primary)
             }
-            .navigationBarTitle("Weather Details", displayMode: .inline)
-            .navigationBarItems(trailing: Button("Done") {
-                dismiss()
-            })
         }
     }
     
