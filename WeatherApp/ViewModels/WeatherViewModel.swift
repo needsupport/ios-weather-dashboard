@@ -10,10 +10,10 @@ class WeatherViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isRefreshing = false
     @Published var error: String? = nil
-    @Published var lastError: String? = nil  // Added missing property
+    @Published var lastError: String? = nil
     @Published var selectedDayID: String? = nil
     @Published var selectedLocation: SavedLocation?
-    @Published var selectedLocationName: String? = nil  // Added missing property
+    @Published var selectedLocationName: String? = nil
     @Published var savedLocations: [SavedLocation] = []
     
     // MARK: - Preferences
@@ -134,7 +134,7 @@ class WeatherViewModel: ObservableObject {
     
     func selectLocation(_ location: SavedLocation) {
         selectedLocation = location
-        selectedLocationName = location.name  // Update selectedLocationName
+        selectedLocationName = location.name
         fetchWeatherData(for: location.coordinatesString())
     }
     
@@ -172,7 +172,9 @@ class WeatherViewModel: ObservableObject {
             }, receiveValue: { [weak self] (weatherData, alerts) in
                 guard let self = self else { return }
                 self.weatherData = weatherData
-                self.alerts = alerts
+                
+                // Process alerts with the alert service
+                self.processWeatherAlerts(alerts)
                 
                 // If location name came from API, update selectedLocationName
                 if self.selectedLocationName == nil {
@@ -206,7 +208,9 @@ class WeatherViewModel: ObservableObject {
             }, receiveValue: { [weak self] (weatherData, alerts) in
                 guard let self = self else { return }
                 self.weatherData = weatherData
-                self.alerts = alerts
+                
+                // Process alerts with the alert service
+                self.processWeatherAlerts(alerts)
                 
                 // Update selected location name
                 self.selectedLocationName = weatherData.location
@@ -274,7 +278,7 @@ class WeatherViewModel: ObservableObject {
                         if self.isSelectedLocation(coordinates) {
                             DispatchQueue.main.async {
                                 self.weatherData = weatherData
-                                self.alerts = alerts
+                                self.processWeatherAlerts(alerts)
                             }
                         }
                         
