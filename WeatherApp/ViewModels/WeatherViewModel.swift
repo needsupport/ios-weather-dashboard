@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import CoreLocation
+import WidgetKit
 
 class WeatherViewModel: ObservableObject {
     // MARK: - Published Properties
@@ -9,8 +10,10 @@ class WeatherViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isRefreshing = false
     @Published var error: String? = nil
+    @Published var lastError: String? = nil  // Added missing property
     @Published var selectedDayID: String? = nil
     @Published var selectedLocation: SavedLocation?
+    @Published var selectedLocationName: String? = nil  // Added missing property
     @Published var savedLocations: [SavedLocation] = []
     
     // MARK: - Preferences
@@ -71,6 +74,7 @@ class WeatherViewModel: ObservableObject {
             .sink { [weak self] error in
                 guard let self = self else { return }
                 self.error = "Location error: \(error.localizedDescription)"
+                self.lastError = "Location error: \(error.localizedDescription)"
                 self.isLoading = false
                 self.isRefreshing = false
                 
@@ -130,6 +134,7 @@ class WeatherViewModel: ObservableObject {
     
     func selectLocation(_ location: SavedLocation) {
         selectedLocation = location
+        selectedLocationName = location.name  // Update selectedLocationName
         fetchWeatherData(for: location.coordinatesString())
     }
     
@@ -162,14 +167,23 @@ class WeatherViewModel: ObservableObject {
                 
                 if case .failure(let error) = completion {
                     self.error = error.localizedDescription
+                    self.lastError = error.localizedDescription
                 }
             }, receiveValue: { [weak self] (weatherData, alerts) in
                 guard let self = self else { return }
                 self.weatherData = weatherData
                 self.alerts = alerts
                 
-                // Update widget data if available in this app version
+                // If location name came from API, update selectedLocationName
+                if self.selectedLocationName == nil {
+                    self.selectedLocationName = weatherData.location
+                }
+                
+                // Update widget data
                 self.updateWidgetData()
+                
+                // Save to CoreData
+                self.saveWeatherDataToCoreData()
             })
             .store(in: &cancellables)
     }
@@ -187,14 +201,21 @@ class WeatherViewModel: ObservableObject {
                 
                 if case .failure(let error) = completion {
                     self.error = error.localizedDescription
+                    self.lastError = error.localizedDescription
                 }
             }, receiveValue: { [weak self] (weatherData, alerts) in
                 guard let self = self else { return }
                 self.weatherData = weatherData
                 self.alerts = alerts
                 
+                // Update selected location name
+                self.selectedLocationName = weatherData.location
+                
                 // Update widget data
                 self.updateWidgetData()
+                
+                // Save to CoreData
+                self.saveWeatherDataToCoreData()
             })
             .store(in: &cancellables)
     }
@@ -210,6 +231,96 @@ class WeatherViewModel: ObservableObject {
         } else {
             requestLocation()
         }
+    }
+    
+    // MARK: - Background Refresh
+    func refreshAllLocationsInBackground() async throws {
+        // First refresh the current/selected location
+        if let selectedLocation = selectedLocation {
+            let coordinates = "\(selectedLocation.latitude),\(selectedLocation.longitude)"
+            try await refreshLocationInBackground(coordinates)
+        } else if let coordinates = currentLocationCoordinates() {
+            try await refreshLocationInBackground(coordinates)
+        }
+        
+        // Then refresh all saved locations
+        for location in savedLocations {
+            if selectedLocation?.id != location.id { // Skip if already refreshed
+                let coordinates = "\(location.latitude),\(location.longitude)"
+                try await refreshLocationInBackground(coordinates)
+            }
+        }
+        
+        // Update widgets after all refreshes
+        updateWidgetData()
+    }
+    
+    private func refreshLocationInBackground(_ coordinates: String) async throws {
+        return try await withCheckedThrowingContinuation { continuation in
+            weatherService.fetchWeather(for: coordinates, unit: preferences.unit)
+                .sink(
+                    receiveCompletion: { completion in
+                        switch completion {
+                        case .finished:
+                            continuation.resume()
+                        case .failure(let error):
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { [weak self] (weatherData, alerts) in
+                        guard let self = self else { return }
+                        
+                        // If this is the selected location, update the main data
+                        if self.isSelectedLocation(coordinates) {
+                            DispatchQueue.main.async {
+                                self.weatherData = weatherData
+                                self.alerts = alerts
+                            }
+                        }
+                        
+                        // Save to CoreData regardless
+                        self.saveWeatherDataToCache(weatherData, for: coordinates)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func isSelectedLocation(_ coordinates: String) -> Bool {
+        if let selectedLocation = selectedLocation {
+            let selectedCoordinates = "\(selectedLocation.latitude),\(selectedLocation.longitude)"
+            return coordinates == selectedCoordinates
+        }
+        return false
+    }
+    
+    private func saveWeatherDataToCache(_ weatherData: WeatherData, for coordinates: String) {
+        // Split coordinates into latitude and longitude
+        let parts = coordinates.split(separator: ",")
+        guard parts.count == 2,
+              let latitude = Double(parts[0]),
+              let longitude = Double(parts[1]) else {
+            return
+        }
+        
+        // Find or create the location
+        let locationID = "\(latitude),\(longitude)"
+        let locationName = weatherData.location
+        
+        // Save to CoreData
+        CoreDataManager.shared.saveLocation(
+            name: locationName,
+            latitude: latitude,
+            longitude: longitude
+        )
+        .flatMap { locationId -> AnyPublisher<Void, Error> in
+            return CoreDataManager.shared.saveWeatherData(weatherData, for: locationId)
+        }
+        .sink(
+            receiveCompletion: { _ in },
+            receiveValue: { _ in }
+        )
+        .store(in: &cancellables)
     }
     
     // MARK: - UI Helper Functions
@@ -254,9 +365,41 @@ class WeatherViewModel: ObservableObject {
     }
     
     // MARK: - Widget Integration
-    private func updateWidgetData() {
-        // This is just a placeholder - will be implemented when we add widget support
-        // Later, we'll use WeatherWidgetDataProvider to share data with widgets
+    func updateWidgetData() {
+        guard !weatherData.daily.isEmpty else { return }
+        
+        // Create daily forecasts for the widget
+        let dailyWidgetForecasts = weatherData.daily.prefix(7).map { forecast in
+            DailyWidgetForecast(
+                id: forecast.id,
+                day: forecast.day,
+                highTemperature: forecast.tempHigh,
+                lowTemperature: forecast.tempLow,
+                condition: forecast.shortForecast,
+                iconName: forecast.icon,
+                precipitationChance: forecast.precipitation.chance
+            )
+        }
+        
+        // Create weather widget data
+        let widgetData = WeatherWidgetData(
+            location: weatherData.location,
+            temperature: weatherData.daily.first?.tempHigh ?? 0,
+            temperatureUnit: preferences.unit.rawValue,
+            condition: weatherData.daily.first?.shortForecast ?? "",
+            iconName: weatherData.daily.first?.icon ?? "",
+            highTemperature: weatherData.daily.first?.tempHigh ?? 0,
+            lowTemperature: weatherData.daily.first?.tempLow ?? 0,
+            precipitationChance: weatherData.daily.first?.precipitation.chance ?? 0,
+            dailyForecasts: Array(dailyWidgetForecasts),
+            lastUpdated: Date()
+        )
+        
+        // Save to shared container for widget access
+        WeatherWidgetDataProvider.shared.saveWidgetData(widgetData)
+        
+        // Reload widgets
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 
@@ -274,5 +417,80 @@ extension WeatherViewModel {
         var showHistoricalRange = true
         var showAnomalies = false
         var showHistoricalAvg = true
+    }
+}
+
+// MARK: - Widget Data Provider
+class WeatherWidgetDataProvider {
+    static let shared = WeatherWidgetDataProvider()
+    
+    private let userDefaults: UserDefaults?
+    private let weatherDataKey = "weatherWidgetData"
+    
+    private init() {
+        // Initialize with app group container
+        userDefaults = UserDefaults(suiteName: "group.com.weatherapp.widget")
+    }
+    
+    func saveWidgetData(_ data: WeatherWidgetData) {
+        guard let encoded = try? JSONEncoder().encode(data) else {
+            print("Failed to encode widget data")
+            return
+        }
+        
+        userDefaults?.set(encoded, forKey: weatherDataKey)
+    }
+    
+    func loadWidgetData() -> WeatherWidgetData? {
+        guard let data = userDefaults?.data(forKey: weatherDataKey),
+              let widgetData = try? JSONDecoder().decode(WeatherWidgetData.self, from: data) else {
+            return nil
+        }
+        
+        return widgetData
+    }
+}
+
+// MARK: - Widget Data Models
+struct WeatherWidgetData: Codable {
+    let location: String
+    let temperature: Double
+    let temperatureUnit: String
+    let condition: String
+    let iconName: String
+    let highTemperature: Double
+    let lowTemperature: Double
+    let precipitationChance: Double
+    let dailyForecasts: [DailyWidgetForecast]
+    let lastUpdated: Date
+    
+    var temperatureString: String {
+        return "\(Int(round(temperature)))°\(temperatureUnit)"
+    }
+    
+    var highTempString: String {
+        return "\(Int(round(highTemperature)))°"
+    }
+    
+    var lowTempString: String {
+        return "\(Int(round(lowTemperature)))°"
+    }
+}
+
+struct DailyWidgetForecast: Codable, Identifiable {
+    var id: String
+    let day: String
+    let highTemperature: Double
+    let lowTemperature: Double
+    let condition: String
+    let iconName: String
+    let precipitationChance: Double
+    
+    var highTempString: String {
+        return "\(Int(round(highTemperature)))°"
+    }
+    
+    var lowTempString: String {
+        return "\(Int(round(lowTemperature)))°"
     }
 }
