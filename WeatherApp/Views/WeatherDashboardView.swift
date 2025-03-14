@@ -1,1 +1,519 @@
-import SwiftUI\n\n/// Main dashboard view displaying weather information\nstruct WeatherDashboardView: View {\n    @EnvironmentObject var viewModel: WeatherViewModel\n    @State private var selectedTab = 0\n    \n    var body: some View {\n        ScrollView {\n            VStack(spacing: 20) {\n                // Current weather summary\n                CurrentWeatherView()\n                    .padding(.horizontal)\n                \n                // Tab selector for different views\n                tabSelector\n                \n                // Content based on selected tab\n                tabContent\n            }\n            .padding(.vertical)\n        }\n        .refreshable {\n            viewModel.refreshWeather()\n        }\n    }\n    \n    /// Tab selector for different content views\n    var tabSelector: some View {\n        HStack {\n            ForEach(0..<3) { index in\n                Button(action: {\n                    selectedTab = index\n                }) {\n                    Text(tabTitle(for: index))\n                        .fontWeight(selectedTab == index ? .bold : .regular)\n                        .padding(.vertical, 8)\n                        .padding(.horizontal, 12)\n                        .background(\n                            selectedTab == index ?\n                            RoundedRectangle(cornerRadius: 20)\n                                .fill(Color.blue.opacity(0.2)) :\n                            RoundedRectangle(cornerRadius: 20)\n                                .fill(Color.clear)\n                        )\n                }\n                .buttonStyle(PlainButtonStyle())\n            }\n        }\n        .padding(.horizontal)\n    }\n    \n    /// Content based on selected tab\n    @ViewBuilder\n    var tabContent: some View {\n        switch selectedTab {\n        case 0:\n            dailyForecastView\n        case 1:\n            hourlyForecastView\n        case 2:\n            alertsView\n        default:\n            dailyForecastView\n        }\n    }\n    \n    /// Daily forecast grid view\n    var dailyForecastView: some View {\n        VStack(spacing: 16) {\n            // Weather chart\n            WeatherChartView()\n                .padding(.horizontal)\n            \n            // Daily forecast cards\n            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 16) {\n                ForEach(viewModel.weatherData.daily) { day in\n                    WeatherCardView(forecast: day)\n                        .onTapGesture {\n                            viewModel.setSelectedDay(day.id)\n                        }\n                }\n            }\n            .padding(.horizontal)\n        }\n    }\n    \n    /// Hourly forecast view\n    var hourlyForecastView: some View {\n        VStack(alignment: .leading, spacing: 8) {\n            Text(\"Hourly Forecast\")\n                .font(.headline)\n                .padding(.horizontal)\n            \n            ScrollView(.horizontal, showsIndicators: false) {\n                HStack(spacing: 16) {\n                    ForEach(viewModel.weatherData.hourly) { hour in\n                        HourlyForecastItemView(forecast: hour)\n                    }\n                }\n                .padding(.horizontal)\n            }\n            \n            Divider()\n                .padding(.vertical, 8)\n            \n            Text(\"Next 24 Hours Details\")\n                .font(.headline)\n                .padding(.horizontal)\n            \n            DetailedHourlyView(hourlyData: viewModel.weatherData.hourly)\n                .padding(.horizontal)\n        }\n    }\n    \n    /// Weather alerts view\n    var alertsView: some View {\n        VStack(alignment: .leading, spacing: 16) {\n            Text(\"Weather Alerts\")\n                .font(.headline)\n                .padding(.horizontal)\n            \n            if viewModel.alerts.isEmpty {\n                VStack(spacing: 12) {\n                    Image(systemName: \"checkmark.circle\")\n                        .font(.system(size: 40))\n                        .foregroundColor(.green)\n                    \n                    Text(\"No active weather alerts\")\n                        .font(.subheadline)\n                        .foregroundColor(.secondary)\n                }\n                .frame(maxWidth: .infinity, minHeight: 200)\n            } else {\n                ForEach(viewModel.alerts) { alert in\n                    AlertCardView(alert: alert)\n                }\n            }\n        }\n        .padding(.horizontal)\n    }\n    \n    /// Get tab title based on index\n    func tabTitle(for index: Int) -> String {\n        switch index {\n        case 0: return \"Forecast\"\n        case 1: return \"Hourly\"\n        case 2: return \"Alerts\"\n        default: return \"\"\n        }\n    }\n}\n\n/// Hourly forecast item view\nstruct HourlyForecastItemView: View {\n    let forecast: HourlyForecast\n    @EnvironmentObject var viewModel: WeatherViewModel\n    \n    var body: some View {\n        VStack(spacing: 8) {\n            Text(forecast.time)\n                .font(.caption)\n                .foregroundColor(.secondary)\n            \n            weatherIcon\n                .font(.system(size: 22))\n            \n            Text(\"\\(Int(forecast.temperature))\u00b0\\(viewModel.preferences.unit.rawValue)\")\n                .font(.headline)\n            \n            HStack(spacing: 4) {\n                Image(systemName: \"wind\")\n                    .font(.system(size: 10))\n                Text(\"\\(Int(forecast.windSpeed))\")\n                    .font(.caption2)\n            }\n            .foregroundColor(.secondary)\n        }\n        .frame(width: 60, height: 120)\n        .padding(8)\n        .background(\n            RoundedRectangle(cornerRadius: 12)\n                .fill(Color(.systemBackground))\n                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)\n        )\n    }\n    \n    @ViewBuilder\n    var weatherIcon: some View {\n        switch forecast.icon {\n        case \"sun\":\n            Image(systemName: \"sun.max.fill\").symbolRenderingMode(.multicolor)\n        case \"cloud\":\n            Image(systemName: \"cloud.fill\").symbolRenderingMode(.multicolor)\n        case \"rain\":\n            Image(systemName: \"cloud.rain.fill\").symbolRenderingMode(.multicolor)\n        case \"snow\":\n            Image(systemName: \"snow\").symbolRenderingMode(.multicolor)\n        default:\n            Image(systemName: \"cloud.fill\").symbolRenderingMode(.multicolor)\n        }\n    }\n}\n\n/// Detailed hourly forecast view\nstruct DetailedHourlyView: View {\n    let hourlyData: [HourlyForecast]\n    \n    var body: some View {\n        VStack(spacing: 16) {\n            ForEach(hourlyData.prefix(12)) { hour in\n                HStack {\n                    Text(hour.time)\n                        .frame(width: 60, alignment: .leading)\n                    \n                    Image(systemName: getSystemIcon(for: hour.icon))\n                        .symbolRenderingMode(.multicolor)\n                        .frame(width: 30)\n                    \n                    Text(hour.shortForecast)\n                        .lineLimit(1)\n                        .frame(maxWidth: .infinity, alignment: .leading)\n                    \n                    Text(\"\\(Int(hour.temperature))\u00b0\")\n                        .fontWeight(.semibold)\n                        .frame(width: 40, alignment: .trailing)\n                }\n                .font(.subheadline)\n                \n                if hourlyData.firstIndex(where: { $0.id == hour.id }) != hourlyData.prefix(12).count - 1 {\n                    Divider()\n                }\n            }\n        }\n        .padding()\n        .background(\n            RoundedRectangle(cornerRadius: 12)\n                .fill(Color(.systemBackground))\n                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)\n        )\n    }\n    \n    func getSystemIcon(for iconType: String) -> String {\n        switch iconType {\n        case \"sun\": return \"sun.max.fill\"\n        case \"cloud\": return \"cloud.fill\"\n        case \"rain\": return \"cloud.rain.fill\"\n        case \"snow\": return \"snow\"\n        default: return \"cloud.fill\"\n        }\n    }\n}\n\n/// Alert card view\nstruct AlertCardView: View {\n    let alert: WeatherAlert\n    @State private var isExpanded = false\n    \n    var body: some View {\n        VStack(alignment: .leading, spacing: 8) {\n            HStack {\n                alertIcon\n                \n                VStack(alignment: .leading, spacing: 4) {\n                    Text(alert.event)\n                        .font(.headline)\n                    \n                    Text(alert.headline)\n                        .font(.subheadline)\n                        .lineLimit(isExpanded ? nil : 1)\n                }\n                \n                Spacer()\n                \n                Button(action: {\n                    withAnimation {\n                        isExpanded.toggle()\n                    }\n                }) {\n                    Image(systemName: isExpanded ? \"chevron.up\" : \"chevron.down\")\n                        .foregroundColor(.primary)\n                }\n            }\n            \n            if isExpanded {\n                Divider()\n                \n                Text(alert.description)\n                    .font(.body)\n                    .foregroundColor(.secondary)\n                \n                HStack {\n                    Label(\n                        formatDate(alert.start),\n                        systemImage: \"clock\"\n                    )\n                    \n                    Spacer()\n                    \n                    if let end = alert.end {\n                        Label(\n                            formatDate(end),\n                            systemImage: \"clock.badge.checkmark\"\n                        )\n                    }\n                }\n                .font(.caption)\n                .foregroundColor(.secondary)\n            }\n        }\n        .padding()\n        .background(\n            RoundedRectangle(cornerRadius: 12)\n                .fill(alertBackgroundColor)\n                .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)\n        )\n    }\n    \n    /// Alert background color based on severity\n    var alertBackgroundColor: Color {\n        switch alert.severity.lowercased() {\n        case \"extreme\":\n            return Color.red.opacity(0.2)\n        case \"severe\":\n            return Color.orange.opacity(0.2)\n        case \"moderate\":\n            return Color.yellow.opacity(0.2)\n        default:\n            return Color.blue.opacity(0.2)\n        }\n    }\n    \n    /// Alert icon based on severity\n    @ViewBuilder\n    var alertIcon: some View {\n        switch alert.severity.lowercased() {\n        case \"extreme\":\n            Image(systemName: \"exclamationmark.triangle.fill\")\n                .foregroundColor(.red)\n                .font(.title2)\n        case \"severe\":\n            Image(systemName: \"exclamationmark.triangle.fill\")\n                .foregroundColor(.orange)\n                .font(.title2)\n        case \"moderate\":\n            Image(systemName: \"exclamationmark.circle.fill\")\n                .foregroundColor(.yellow)\n                .font(.title2)\n        default:\n            Image(systemName: \"info.circle.fill\")\n                .foregroundColor(.blue)\n                .font(.title2)\n        }\n    }\n    \n    /// Format date to readable string\n    func formatDate(_ date: Date) -> String {\n        let formatter = DateFormatter()\n        formatter.dateStyle = .short\n        formatter.timeStyle = .short\n        return formatter.string(from: date)\n    }\n}\n\nstruct WeatherDashboardView_Previews: PreviewProvider {\n    static var previews: some View {\n        WeatherDashboardView()\n            .environmentObject(WeatherViewModel())\n    }\n}
+import SwiftUI
+
+struct WeatherDashboardView: View {
+    @EnvironmentObject var viewModel: WeatherViewModel
+    @State private var selectedTab = 0
+    @Environment(\.colorScheme) var colorScheme
+    
+    var isDaytime: Bool {
+        guard !viewModel.weatherData.daily.isEmpty else { return true }
+        let hour = Calendar.current.component(.hour, from: Date())
+        return hour >= 6 && hour < 18
+    }
+    
+    var currentCondition: String {
+        viewModel.weatherData.daily.first?.shortForecast ?? "Clear"
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Current weather with dynamic background
+                if let currentForecast = viewModel.weatherData.daily.first {
+                    ZStack {
+                        // Dynamic background based on weather condition
+                        Color.weatherGradient(
+                            for: currentForecast.shortForecast,
+                            isDaytime: isDaytime
+                        )
+                        .ignoresSafeArea(edges: .top)
+                        
+                        // Weather effects
+                        if currentForecast.shortForecast.lowercased().contains("rain") {
+                            RainEffect(intensity: currentForecast.precipitation.chance / 100)
+                                .ignoresSafeArea(edges: .top)
+                        }
+                        
+                        CurrentWeatherView()
+                            .padding(.top, 30)
+                            .padding(.horizontal)
+                    }
+                    .frame(height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .padding(.horizontal)
+                }
+                
+                // Tab selector with improved visual design
+                ImprovedTabSelector(selectedTab: $selectedTab, titles: ["Daily", "Hourly", "Details"])
+                
+                // Content based on selected tab
+                tabContent
+                    .padding(.bottom)
+            }
+            .padding(.vertical)
+        }
+        .refreshable {
+            viewModel.refreshWeather()
+        }
+        .overlay {
+            if viewModel.isLoading {
+                ProgressView("Loading weather data...")
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(.systemBackground))
+                            .shadow(radius: 5)
+                    )
+            }
+        }
+        .onChange(of: viewModel.weatherData) { _ in
+            // Apply subtle animations when data updates
+            withAnimation(.easeInOut(duration: 0.5)) {
+                // Animation trigger
+            }
+        }
+        .alert(item: Binding<AlertItem?>(
+            get: {
+                if let error = viewModel.error {
+                    return AlertItem(
+                        id: UUID().uuidString,
+                        title: "Error",
+                        message: error,
+                        dismissButton: .default(Text("OK"))
+                    )
+                }
+                return nil
+            },
+            set: { _ in
+                viewModel.error = nil
+            }
+        )) { alertItem in
+            Alert(
+                title: Text(alertItem.title),
+                message: Text(alertItem.message),
+                dismissButton: alertItem.dismissButton
+            )
+        }
+    }
+    
+    // Content based on selected tab
+    @ViewBuilder
+    var tabContent: some View {
+        switch selectedTab {
+        case 0:
+            dailyForecastView
+        case 1:
+            hourlyForecastView
+        case 2:
+            detailsView
+        default:
+            dailyForecastView
+        }
+    }
+    
+    // Daily forecast view
+    var dailyForecastView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("7-Day Forecast")
+                .weatherHeadline()
+                .padding(.horizontal)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(viewModel.weatherData.daily) { forecast in
+                        DailyForecastCard(forecast: forecast, 
+                                          isSelected: viewModel.selectedDayID == forecast.id,
+                                          isDaytime: isDaytime)
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    viewModel.setSelectedDay(forecast.id)
+                                }
+                            }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            
+            if let selectedForecast = viewModel.weatherData.daily.first(where: { $0.id == viewModel.selectedDayID }) {
+                selectedDayDetailView(for: selectedForecast)
+            }
+        }
+    }
+    
+    // Hourly forecast view
+    var hourlyForecastView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Hourly Forecast")
+                .weatherHeadline()
+                .padding(.horizontal)
+            
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(viewModel.weatherData.hourly) { forecast in
+                        HourlyForecastRow(forecast: forecast)
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+    }
+    
+    // Details view
+    var detailsView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Weather Details")
+                .weatherHeadline()
+                .padding(.horizontal)
+            
+            if let currentForecast = viewModel.weatherData.daily.first {
+                VStack(spacing: 20) {
+                    // Detailed info cards
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                        DetailInfoCard(title: "UV Index", value: "\(currentForecast.uvIndex)")
+                        DetailInfoCard(title: "Humidity", value: "\(Int(currentForecast.humidity ?? 0))%")
+                        DetailInfoCard(title: "Wind", value: "\(Int(currentForecast.wind.speed)) \(currentForecast.wind.direction)")
+                        DetailInfoCard(title: "Precipitation", value: "\(Int(currentForecast.precipitation.chance))%")
+                    }
+                    .padding(.horizontal)
+                    
+                    // Detailed forecast
+                    WeatherCard(condition: currentForecast.shortForecast, isDaytime: isDaytime) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Forecast Details")
+                                .font(.headline)
+                            
+                            Text(currentForecast.detailedForecast)
+                                .font(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal)
+                    
+                    // Weather alerts
+                    if !viewModel.alerts.isEmpty {
+                        alertsView
+                    }
+                }
+            }
+        }
+    }
+    
+    // Selected day detail view
+    func selectedDayDetailView(for forecast: DailyForecast) -> some View {
+        WeatherCard(condition: forecast.shortForecast, isDaytime: isDaytime) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(forecast.fullDay)
+                            .font(.headline)
+                        
+                        Text(forecast.shortForecast)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .trailing, spacing: 4) {
+                        HStack {
+                            Label {
+                                Text("\(Int(forecast.tempHigh))°")
+                                    .fontWeight(.medium)
+                            } icon: {
+                                Image(systemName: "arrow.up")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        
+                        HStack {
+                            Label {
+                                Text("\(Int(forecast.tempLow))°")
+                                    .fontWeight(.medium)
+                            } icon: {
+                                Image(systemName: "arrow.down")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // Additional forecast details
+                HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        DetailRow(icon: "wind", title: "Wind", value: "\(Int(forecast.wind.speed)) mph \(forecast.wind.direction)")
+                        DetailRow(icon: "humidity", title: "Humidity", value: "\(Int(forecast.humidity ?? 0))%")
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        DetailRow(icon: "drop.fill", title: "Precipitation", value: "\(Int(forecast.precipitation.chance))%")
+                        DetailRow(icon: "sun.max.fill", title: "UV Index", value: getUVIndexText(forecast.uvIndex))
+                    }
+                }
+            }
+            .padding()
+        }
+        .padding(.horizontal)
+    }
+    
+    // Alerts view
+    var alertsView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Weather Alerts")
+                .weatherHeadline()
+                .padding(.horizontal)
+            
+            ForEach(viewModel.alerts) { alert in
+                AlertCard(alert: alert)
+            }
+        }
+    }
+    
+    // Helper function for UV index
+    func getUVIndexText(_ index: Int) -> String {
+        switch index {
+        case 0...2: return "\(index) (Low)"
+        case 3...5: return "\(index) (Moderate)"
+        case 6...7: return "\(index) (High)"
+        case 8...10: return "\(index) (Very High)"
+        default: return "\(index) (Extreme)"
+        }
+    }
+}
+
+// Alert item for error handling
+struct AlertItem: Identifiable {
+    var id: String
+    var title: String
+    var message: String
+    var dismissButton: Alert.Button
+}
+
+// Daily forecast card
+struct DailyForecastCard: View {
+    let forecast: DailyForecast
+    let isSelected: Bool
+    let isDaytime: Bool
+    
+    var body: some View {
+        WeatherCard(condition: forecast.shortForecast, isDaytime: isDaytime, hasShadow: isSelected) {
+            VStack(spacing: 12) {
+                // Day label with "Today" highlight
+                Text(isToday ? "Today" : forecast.day)
+                    .font(.headline)
+                    .foregroundColor(isToday ? .accentColor : .primary)
+                
+                // Weather icon with improved rendering
+                WeatherIcon(
+                    iconName: forecast.icon,
+                    condition: forecast.shortForecast,
+                    size: 30
+                )
+                .padding(.vertical, 5)
+                
+                // Weather description with better wrapping
+                Text(forecast.shortForecast)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(height: 36)
+                
+                // Temperature range with visual indicators
+                HStack(spacing: 12) {
+                    // High temp
+                    VStack(alignment: .center, spacing: 2) {
+                        Text("High")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("\(Int(forecast.tempHigh))°")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.red)
+                    }
+                    
+                    // Low temp
+                    VStack(alignment: .center, spacing: 2) {
+                        Text("Low")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("\(Int(forecast.tempLow))°")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.blue)
+                    }
+                }
+                
+                // Precipitation indicator
+                HStack(spacing: 4) {
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.blue)
+                    Text("\(Int(forecast.precipitation.chance))%")
+                        .font(.caption)
+                }
+                .opacity(forecast.precipitation.chance > 0 ? 1.0 : 0.3)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
+            .frame(width: 120)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+    }
+    
+    // Check if this is today's forecast
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(forecast.date)
+    }
+}
+
+// Hourly forecast row
+struct HourlyForecastRow: View {
+    let forecast: HourlyForecast
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Time
+            Text(forecast.time)
+                .font(.headline)
+                .frame(width: 50, alignment: .leading)
+            
+            // Weather icon
+            WeatherIcon(
+                iconName: forecast.icon,
+                condition: forecast.shortForecast,
+                size: 24
+            )
+            
+            // Forecast
+            Text(forecast.shortForecast)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            // Temperature
+            Text("\(Int(forecast.temperature))°")
+                .font(.headline)
+                .frame(width: 50, alignment: .trailing)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+// Weather alert card
+struct AlertCard: View {
+    let alert: WeatherAlert
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Circle()
+                    .fill(Color.alertColor(for: alert.severity))
+                    .frame(width: 12, height: 12)
+                
+                Text(alert.headline)
+                    .font(.headline)
+                    .foregroundColor(Color.alertColor(for: alert.severity))
+                
+                Spacer()
+                
+                if let end = alert.end {
+                    Text("Until \(timeFormatter.string(from: end))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Text(alert.description)
+                .font(.body)
+                .lineLimit(3)
+            
+            Button("View Details") {
+                // Action to show alert details
+            }
+            .font(.caption)
+            .foregroundColor(.accentColor)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .padding(.horizontal)
+    }
+    
+    private var timeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }
+}
+
+// Detail info card
+struct DetailInfoCard: View {
+    let title: String
+    let value: String
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Text(value)
+                .font(.title3)
+                .fontWeight(.medium)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+// Detail row for additional information
+struct DetailRow: View {
+    let icon: String
+    let title: String
+    let value: String
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .frame(width: 24, height: 24)
+                .foregroundColor(.secondary)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Text(value)
+                    .font(.subheadline)
+            }
+        }
+    }
+}
+
+// Preview
+struct WeatherDashboardView_Previews: PreviewProvider {
+    static var previews: some View {
+        WeatherDashboardView()
+            .environmentObject(WeatherViewModel())
+    }
+}
